@@ -53,6 +53,10 @@ async def update_signal_config(
     config = await get_or_create_signal_config(db)
     config.buy_threshold_pct = payload.buy_threshold_pct
     config.sell_threshold_pct = payload.sell_threshold_pct
+    config.rsi_oversold = payload.rsi_oversold
+    config.rsi_overbought = payload.rsi_overbought
+    config.min_buy_signals = payload.min_buy_signals
+    config.min_sell_signals = payload.min_sell_signals
     await db.flush()
     await db.refresh(config)
     return config

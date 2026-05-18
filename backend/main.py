@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import engine, get_db
 from app.models import Base, Fund, NavHistory, Transaction
@@ -14,6 +14,14 @@ from app.auth import get_current_user
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Add new signal_config columns if upgrading an existing DB
+        for stmt in [
+            "ALTER TABLE signal_config ADD COLUMN IF NOT EXISTS rsi_oversold NUMERIC(5,2) NOT NULL DEFAULT 30.0",
+            "ALTER TABLE signal_config ADD COLUMN IF NOT EXISTS rsi_overbought NUMERIC(5,2) NOT NULL DEFAULT 70.0",
+            "ALTER TABLE signal_config ADD COLUMN IF NOT EXISTS min_buy_signals INTEGER NOT NULL DEFAULT 2",
+            "ALTER TABLE signal_config ADD COLUMN IF NOT EXISTS min_sell_signals INTEGER NOT NULL DEFAULT 2",
+        ]:
+            await conn.execute(text(stmt))
     start_scheduler()
     yield
     stop_scheduler()

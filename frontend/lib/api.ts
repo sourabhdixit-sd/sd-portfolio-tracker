@@ -1,4 +1,4 @@
-export type Signal = "BUY" | "SELL" | "HOLD";
+export type Signal = "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL";
 
 export interface Fund {
   id: number;
@@ -16,6 +16,13 @@ export interface FundWithSignal extends Fund {
   low_52w: number | null;
   pct_from_high: number | null;
   pct_from_low: number | null;
+  buy_votes: number;
+  sell_votes: number;
+  pct_from_high_26w: number | null;
+  pct_from_high_13w: number | null;
+  pct_from_high_4w: number | null;
+  pct_from_sma_200: number | null;
+  rsi_14: number | null;
 }
 
 export interface NavPoint {
@@ -50,6 +57,10 @@ export interface PortfolioEntry {
 export interface SignalConfig {
   buy_threshold_pct: number;
   sell_threshold_pct: number;
+  rsi_oversold: number;
+  rsi_overbought: number;
+  min_buy_signals: number;
+  min_sell_signals: number;
 }
 
 export interface SyncStatus {

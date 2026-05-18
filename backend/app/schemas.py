@@ -81,12 +81,27 @@ class SignalOut(BaseModel):
     low_52w: Optional[float]
     pct_from_high: Optional[float]
     pct_from_low: Optional[float]
+    buy_votes: int = 0
+    sell_votes: int = 0
+    pct_from_high_26w: Optional[float] = None
+    pct_from_low_26w: Optional[float] = None
+    pct_from_high_13w: Optional[float] = None
+    pct_from_low_13w: Optional[float] = None
+    pct_from_high_4w: Optional[float] = None
+    pct_from_low_4w: Optional[float] = None
+    sma_200: Optional[float] = None
+    pct_from_sma_200: Optional[float] = None
+    rsi_14: Optional[float] = None
 
 
 class SignalConfigOut(BaseModel):
     id: int
     buy_threshold_pct: float
     sell_threshold_pct: float
+    rsi_oversold: float
+    rsi_overbought: float
+    min_buy_signals: int
+    min_sell_signals: int
     updated_at: datetime
 
     model_config = {"from_attributes": True}
@@ -95,6 +110,10 @@ class SignalConfigOut(BaseModel):
 class SignalConfigUpdate(BaseModel):
     buy_threshold_pct: float
     sell_threshold_pct: float
+    rsi_oversold: float = 30.0
+    rsi_overbought: float = 70.0
+    min_buy_signals: int = 2
+    min_sell_signals: int = 2
 
 
 class SyncStatusOut(BaseModel):

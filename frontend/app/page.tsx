@@ -34,9 +34,21 @@ function getPctClass(value: number | null): string {
   return "text-green-400";
 }
 
+function getRSIClass(value: number | null): string {
+  if (value == null) return "text-slate-400";
+  if (value <= 30) return "text-green-400";
+  if (value >= 70) return "text-red-400";
+  return "text-slate-300";
+}
+
+function getSMAClass(value: number | null): string {
+  if (value == null) return "text-slate-400";
+  return value < 0 ? "text-green-400" : "text-red-400";
+}
+
 export default async function DashboardPage() {
   let signals: FundWithSignal[] = [];
-  let config = { buy_threshold_pct: 10, sell_threshold_pct: 10 };
+  let config = { buy_threshold_pct: 10, sell_threshold_pct: 20, rsi_oversold: 30, rsi_overbought: 70, min_buy_signals: 2, min_sell_signals: 2 };
   let lastSync: string | null = null;
   let portfolioTotal = 0;
   let gainersCount = 0;
@@ -137,69 +149,51 @@ export default async function DashboardPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-700 bg-slate-800/50">
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Fund
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Sector
-                  </th>
-                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Current NAV
-                  </th>
-                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    52W High
-                  </th>
-                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    52W Low
-                  </th>
-                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    % from High
-                  </th>
-                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    % from Low
-                  </th>
-                  <th className="text-center px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Signal
-                  </th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">Fund</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">Sector</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">NAV</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider" title="% below 52-week high">52W ↓</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider" title="% below 26-week high">26W ↓</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider" title="% below 13-week high">13W ↓</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider" title="% below 4-week high">4W ↓</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider" title="14-day RSI · Green ≤30 oversold · Red ≥70 overbought">RSI</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider" title="% vs 200-day SMA · Green = below SMA (buy zone) · Red = above">vs 200d</th>
+                  <th className="text-center px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">Signal</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700">
                 {signals.map((fund) => (
-                  <tr
-                    key={fund.id}
-                    className="hover:bg-slate-700/30 transition-colors"
-                  >
-                    <td className="px-4 py-3 font-medium text-slate-200 max-w-[200px]">
-                      <span className="truncate block" title={fund.name}>
-                        {fund.name}
-                      </span>
+                  <tr key={fund.id} className="hover:bg-slate-700/30 transition-colors">
+                    <td className="px-4 py-3 font-medium text-slate-200 max-w-[180px]">
+                      <span className="truncate block" title={fund.name}>{fund.name}</span>
                     </td>
-                    <td className="px-4 py-3 text-slate-400">
-                      {fund.sector ?? (
-                        <span className="text-slate-600">—</span>
-                      )}
+                    <td className="px-4 py-3 text-slate-400 text-sm">
+                      {fund.sector ?? <span className="text-slate-600">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-right text-slate-200">
-                      {formatINR(fund.current_nav)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-300">
-                      {formatINR(fund.high_52w)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-300">
-                      {formatINR(fund.low_52w)}
-                    </td>
-                    <td
-                      className={`px-4 py-3 text-right ${getPctClass(fund.pct_from_high)}`}
-                    >
+                    <td className="px-4 py-3 text-right text-slate-200">{formatINR(fund.current_nav)}</td>
+                    <td className={`px-4 py-3 text-right text-sm ${getPctClass(fund.pct_from_high)}`}>
                       {formatPct(fund.pct_from_high)}
                     </td>
-                    <td
-                      className={`px-4 py-3 text-right ${getPctClass(fund.pct_from_low)}`}
-                    >
-                      {formatPct(fund.pct_from_low)}
+                    <td className={`px-4 py-3 text-right text-sm ${getPctClass(fund.pct_from_high_26w)}`}>
+                      {formatPct(fund.pct_from_high_26w)}
+                    </td>
+                    <td className={`px-4 py-3 text-right text-sm ${getPctClass(fund.pct_from_high_13w)}`}>
+                      {formatPct(fund.pct_from_high_13w)}
+                    </td>
+                    <td className={`px-4 py-3 text-right text-sm ${getPctClass(fund.pct_from_high_4w)}`}>
+                      {formatPct(fund.pct_from_high_4w)}
+                    </td>
+                    <td className={`px-4 py-3 text-right text-sm ${getRSIClass(fund.rsi_14)}`}>
+                      {fund.rsi_14 != null ? fund.rsi_14.toFixed(1) : "—"}
+                    </td>
+                    <td className={`px-4 py-3 text-right text-sm ${getSMAClass(fund.pct_from_sma_200)}`}>
+                      {formatPct(fund.pct_from_sma_200)}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <SignalBadge signal={fund.signal as Signal} />
+                      <div className="flex flex-col items-center gap-0.5">
+                        <SignalBadge signal={fund.signal as Signal} />
+                        <span className="text-xs text-slate-500">{fund.buy_votes}B · {fund.sell_votes}S</span>
+                      </div>
                     </td>
                   </tr>
                 ))}
