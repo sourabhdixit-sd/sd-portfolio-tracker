@@ -403,6 +403,11 @@ export default function ImportFundsModal({
                   {importResult.funds_skipped > 0 &&
                     ` (${importResult.funds_skipped} skipped — already exist or excluded)`}
                 </p>
+                <div className="mt-4 px-4 py-3 bg-blue-900/40 border border-blue-700 rounded-lg text-sm text-blue-300">
+                  <span className="font-medium">Next step:</span> Go to the Dashboard and click{" "}
+                  <span className="font-semibold text-white">Sync Now</span> to fetch live NAV data for all your funds.
+                  NAV history, signals, and portfolio values will populate after sync completes.
+                </div>
               </div>
             </div>
           )}

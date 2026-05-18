@@ -1,9 +1,9 @@
 from datetime import date as date_type
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
+from app.database import get_db, AsyncSessionLocal
 from app.models import Fund, NavHistory, Transaction
 from app.schemas import FundCreate, FundOut, ImportConfirmPayload
 from app.auth import get_current_user
@@ -13,6 +13,20 @@ from app.services.isin_lookup import lookup_all_funds
 from app.services.nav_fetcher import fetch_and_store_nav
 
 router = APIRouter(prefix="/funds", tags=["funds"])
+
+
+async def _fetch_navs_background(fund_data: list[tuple[int, str]]):
+    """Fetch NAV history for newly imported funds in the background."""
+    async with AsyncSessionLocal() as db:
+        for fund_id, amfi_code in fund_data:
+            try:
+                await fetch_and_store_nav(fund_id, amfi_code, db)
+            except Exception as e:
+                print(f"[import] NAV fetch failed for {amfi_code}: {e}")
+        try:
+            await db.commit()
+        except Exception as e:
+            print(f"[import] NAV commit failed: {e}")
 
 
 @router.get("", response_model=list[FundOut])
@@ -118,6 +132,7 @@ async def parse_import_file(
 @router.post("/import/confirm")
 async def confirm_import(
     payload: ImportConfirmPayload,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
@@ -171,12 +186,15 @@ async def confirm_import(
         funds_added += 1
         new_funds.append(fund)
 
-    # Fetch NAV history for all newly added funds
-    for fund in new_funds:
-        try:
-            await fetch_and_store_nav(fund.id, fund.amfi_code, db)
-        except Exception:
-            pass  # NAV fetch failure should not block the import
+    # Commit funds + transactions now — before NAV fetch which can take minutes
+    await db.commit()
+
+    # Fetch NAV history in background so the HTTP response returns immediately
+    if new_funds:
+        background_tasks.add_task(
+            _fetch_navs_background,
+            [(f.id, f.amfi_code) for f in new_funds],
+        )
 
     return {
         "funds_added": funds_added,

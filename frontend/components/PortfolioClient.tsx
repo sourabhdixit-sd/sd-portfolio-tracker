@@ -294,7 +294,7 @@ export default function PortfolioClient({
                         </div>
                       </td>
                       <td
-                        className={`px-4 py-3 text-right ${getPctClass(entry.xirr != null ? entry.xirr * 100 : null)}`}
+                        className={`px-4 py-3 text-right ${getPctClass(entry.xirr)}`}
                       >
                         {formatXIRR(entry.xirr)}
                       </td>

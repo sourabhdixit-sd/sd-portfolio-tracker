@@ -49,7 +49,7 @@ export default function SyncButton() {
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-col items-end gap-1">
       <button
         onClick={handleSync}
         disabled={status === "syncing"}
@@ -75,6 +75,9 @@ export default function SyncButton() {
           ? "Failed"
           : "Sync Now"}
       </button>
+      {status === "syncing" && (
+        <span className="text-xs text-slate-400">Fetching live NAV data for all funds…</span>
+      )}
       {status === "error" && errorMsg && (
         <span className="text-xs text-red-400">{errorMsg}</span>
       )}
