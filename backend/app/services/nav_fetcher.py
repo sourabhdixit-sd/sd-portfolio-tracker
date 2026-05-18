@@ -22,10 +22,7 @@ async def fetch_and_store_nav(fund_id: int, amfi_code: str, db: AsyncSession) ->
     inserted = 0
     for entry in nav_entries:
         try:
-            nav_date = date_type.fromisoformat(
-                entry["date"] if "-" in entry["date"]
-                else _parse_dd_mm_yyyy(entry["date"])
-            )
+            nav_date = date_type.fromisoformat(_parse_dd_mm_yyyy(entry["date"]))
             nav_val = float(entry["nav"])
         except (KeyError, ValueError):
             continue
