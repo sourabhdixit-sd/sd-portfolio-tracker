@@ -81,6 +81,9 @@ async def get_portfolio(
         current_nav = float(latest_nav_row.nav_value) if latest_nav_row else None
 
         current_value = total_units * current_nav if current_nav is not None else None
+        gain_loss = (
+            round(current_value - total_invested, 2) if current_value is not None else None
+        )
         gain_loss_pct = (
             ((current_value - total_invested) / total_invested) * 100
             if current_value is not None and total_invested > 0
@@ -100,6 +103,7 @@ async def get_portfolio(
             current_nav=current_nav,
             current_value=round(current_value, 2) if current_value is not None else None,
             invested_value=round(total_invested, 2),
+            gain_loss=gain_loss,
             gain_loss_pct=round(gain_loss_pct, 2) if gain_loss_pct is not None else None,
             xirr=xirr,
             signal=sig_data["signal"],

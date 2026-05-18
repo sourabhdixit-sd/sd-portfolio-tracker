@@ -23,6 +23,7 @@ async def list_signals(
     for fund in funds:
         sig = await compute_signal(fund.id, db)
         output.append(SignalOut(
+            id=fund.id,
             fund_id=fund.id,
             fund_name=fund.name,
             amfi_code=fund.amfi_code,

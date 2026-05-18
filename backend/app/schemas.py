@@ -62,12 +62,14 @@ class PortfolioFundOut(BaseModel):
     current_nav: Optional[float]
     current_value: Optional[float]
     invested_value: float
+    gain_loss: Optional[float] = None
     gain_loss_pct: Optional[float]
     xirr: Optional[float]
     signal: Optional[str]
 
 
 class SignalOut(BaseModel):
+    id: int
     fund_id: int
     fund_name: str
     amfi_code: str
