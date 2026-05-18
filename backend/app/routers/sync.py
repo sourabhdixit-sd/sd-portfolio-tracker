@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy import select
+from app.database import get_db, AsyncSessionLocal
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
 from app.models import SignalConfig
 from app.schemas import SyncStatusOut
 from app.auth import get_current_user
@@ -12,21 +12,25 @@ from app.services.signal_engine import get_or_create_signal_config
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
-async def run_sync_and_update_timestamp(db: AsyncSession):
-    await sync_all_funds(db)
-    config = await get_or_create_signal_config(db)
-    config.last_sync_at = datetime.now(timezone.utc)
-    await db.flush()
+async def run_sync_background():
+    async with AsyncSessionLocal() as db:
+        try:
+            await sync_all_funds(db)
+            config = await get_or_create_signal_config(db)
+            config.last_sync_at = datetime.now(timezone.utc)
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            print(f"[sync] Background sync failed: {e}")
 
 
 @router.post("")
 async def trigger_sync(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    await run_sync_and_update_timestamp(db)
-    return {"message": "NAV sync completed"}
+    background_tasks.add_task(run_sync_background)
+    return {"message": "Sync started"}
 
 
 @router.get("/status", response_model=SyncStatusOut)
