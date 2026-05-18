@@ -1,0 +1,250 @@
+from datetime import date, datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from scipy.optimize import brentq
+
+from app.database import get_db
+from app.models import Stock, StockTransaction
+from app.schemas import (
+    StockImportConfirmPayload,
+    StockTransactionCreate,
+    StockTransactionOut,
+    StockPortfolioOut,
+)
+from app.auth import get_current_user
+from app.services.portfolio_parser import parse_stocks_from_pdf, parse_stocks_from_excel
+from app.services.stock_price_fetcher import fetch_prices_batch
+
+router = APIRouter(prefix="/stocks", tags=["stocks"])
+
+
+def _compute_stock_xirr(transactions: list[StockTransaction], current_value: float | None) -> Optional[float]:
+    if not transactions or current_value is None:
+        return None
+    today = date.today()
+    cash_flows = [(txn.transaction_date, -(float(txn.shares) * float(txn.buy_price))) for txn in transactions]
+    cash_flows.append((today, current_value))
+    if len(cash_flows) < 2:
+        return None
+    first_date = cash_flows[0][0]
+
+    def npv(rate: float) -> float:
+        return sum(
+            cf / ((1 + rate) ** ((d - first_date).days / 365.0))
+            for d, cf in cash_flows
+        )
+
+    try:
+        return round(brentq(npv, -0.999, 100.0, maxiter=1000) * 100, 2)
+    except (ValueError, RuntimeError):
+        return None
+
+
+def _suggest_symbol(name: str) -> str:
+    """Best-effort NSE ticker from stock name — user can correct in the UI."""
+    cleaned = name.upper().split()[0] if name else ""
+    return f"{cleaned}.NS" if cleaned else ""
+
+
+@router.post("/import/parse")
+async def parse_stocks_file(
+    file: UploadFile = File(...),
+    _: str = Depends(get_current_user),
+):
+    content = await file.read()
+    filename = (file.filename or "").lower()
+
+    if filename.endswith(".pdf"):
+        parsed = parse_stocks_from_pdf(content)
+    elif filename.endswith(".xlsx"):
+        parsed = parse_stocks_from_excel(content)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type. Upload a .pdf or .xlsx file.")
+
+    stocks_out = []
+    for isin, s in parsed["stocks"].items():
+        stocks_out.append({
+            "stock_name": s["stock_name"],
+            "isin": isin,
+            "suggested_symbol": _suggest_symbol(s["stock_name"]),
+            "shares": s["shares"],
+            "avg_cost": s["avg_cost"],
+            "investment_amount": s["investment_amount"],
+            "market_price": s["market_price"],
+        })
+
+    return {"report_date": parsed["report_date"], "stocks": stocks_out}
+
+
+@router.post("/import/confirm")
+async def confirm_stocks_import(
+    payload: StockImportConfirmPayload,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    try:
+        txn_date = date.fromisoformat(payload.transaction_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid transaction_date format. Use YYYY-MM-DD.")
+
+    added = skipped = 0
+
+    for item in payload.stocks:
+        if item.excluded:
+            skipped += 1
+            continue
+
+        existing = await db.execute(select(Stock).where(Stock.isin == item.isin))
+        if existing.scalar_one_or_none():
+            skipped += 1
+            continue
+
+        stock = Stock(
+            name=item.stock_name,
+            isin=item.isin,
+            symbol=item.symbol.strip(),
+        )
+        db.add(stock)
+        await db.flush()
+        await db.refresh(stock)
+
+        db.add(StockTransaction(
+            stock_id=stock.id,
+            transaction_date=txn_date,
+            shares=item.shares,
+            buy_price=item.avg_cost,
+        ))
+        await db.flush()
+        added += 1
+
+    return {"added": added, "skipped": skipped}
+
+
+@router.get("/portfolio", response_model=list[StockPortfolioOut])
+async def get_stock_portfolio(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(select(Stock).where(Stock.is_active == True))
+    stocks = result.scalars().all()
+
+    if not stocks:
+        return []
+
+    # Load transactions per stock
+    stock_txns: dict[int, list[StockTransaction]] = {}
+    for stock in stocks:
+        txn_result = await db.execute(
+            select(StockTransaction)
+            .where(StockTransaction.stock_id == stock.id)
+            .order_by(StockTransaction.transaction_date.asc())
+        )
+        stock_txns[stock.id] = txn_result.scalars().all()
+
+    # Fetch live prices in parallel
+    symbols = [s.symbol for s in stocks]
+    prices = await fetch_prices_batch(symbols)
+
+    output = []
+    for stock in stocks:
+        txns = stock_txns.get(stock.id, [])
+        if not txns:
+            continue
+
+        total_shares = sum(float(t.shares) for t in txns)
+        total_invested = sum(float(t.shares) * float(t.buy_price) for t in txns)
+        avg_buy_price = round(total_invested / total_shares, 4) if total_shares else 0.0
+        current_price = prices.get(stock.symbol)
+        current_value = round(total_shares * current_price, 2) if current_price else None
+        gain_loss = round(current_value - total_invested, 2) if current_value is not None else None
+        gain_loss_pct = (
+            round(gain_loss / total_invested * 100, 2)
+            if gain_loss is not None and total_invested > 0
+            else None
+        )
+        xirr = _compute_stock_xirr(txns, current_value)
+
+        output.append(StockPortfolioOut(
+            stock_id=stock.id,
+            stock_name=stock.name,
+            isin=stock.isin,
+            symbol=stock.symbol,
+            sector=stock.sector,
+            total_shares=round(total_shares, 4),
+            avg_buy_price=avg_buy_price,
+            current_price=current_price,
+            current_value=current_value,
+            invested_value=round(total_invested, 2),
+            gain_loss=gain_loss,
+            gain_loss_pct=gain_loss_pct,
+            xirr=xirr,
+        ))
+
+    return output
+
+
+@router.get("/{stock_id}/transactions", response_model=list[StockTransactionOut])
+async def get_stock_transactions(
+    stock_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(StockTransaction)
+        .where(StockTransaction.stock_id == stock_id)
+        .order_by(StockTransaction.transaction_date.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post("/transactions", response_model=StockTransactionOut, status_code=status.HTTP_201_CREATED)
+async def add_stock_transaction(
+    payload: StockTransactionCreate,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    stock_result = await db.execute(select(Stock).where(Stock.id == payload.stock_id, Stock.is_active == True))
+    if not stock_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Stock not found")
+
+    txn = StockTransaction(
+        stock_id=payload.stock_id,
+        transaction_date=payload.transaction_date,
+        shares=payload.shares,
+        buy_price=payload.buy_price,
+        notes=payload.notes,
+    )
+    db.add(txn)
+    await db.flush()
+    await db.refresh(txn)
+    return txn
+
+
+@router.delete("/transactions/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_stock_transaction(
+    txn_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(select(StockTransaction).where(StockTransaction.id == txn_id))
+    txn = result.scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    await db.delete(txn)
+
+
+@router.delete("/{stock_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_stock(
+    stock_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(select(Stock).where(Stock.id == stock_id))
+    stock = result.scalar_one_or_none()
+    if not stock:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    stock.is_active = False
+    await db.flush()

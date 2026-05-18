@@ -290,3 +290,100 @@ export async function confirmPortfolioImport(
     body: JSON.stringify(data),
   });
 }
+
+// Stock types
+export interface StockPortfolioEntry {
+  stock_id: number;
+  stock_name: string;
+  isin: string;
+  symbol: string;
+  sector: string | null;
+  total_shares: number;
+  avg_buy_price: number;
+  current_price: number | null;
+  current_value: number | null;
+  invested_value: number;
+  gain_loss: number | null;
+  gain_loss_pct: number | null;
+  xirr: number | null;
+}
+
+export interface StockTransaction {
+  id: number;
+  stock_id: number;
+  transaction_date: string;
+  shares: number;
+  buy_price: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface ParsedStock {
+  stock_name: string;
+  isin: string;
+  suggested_symbol: string;
+  shares: number;
+  avg_cost: number;
+  investment_amount: number;
+  market_price: number;
+}
+
+export interface ParsedStocksResult {
+  report_date: string | null;
+  stocks: ParsedStock[];
+}
+
+export interface StockImportConfirmPayload {
+  transaction_date: string;
+  stocks: Array<{
+    stock_name: string;
+    isin: string;
+    symbol: string;
+    shares: number;
+    avg_cost: number;
+    excluded: boolean;
+  }>;
+}
+
+// Stock API functions
+export async function getStockPortfolio(): Promise<StockPortfolioEntry[]> {
+  return apiFetch<StockPortfolioEntry[]>("/stocks/portfolio");
+}
+
+export async function getStockTransactions(stockId: number): Promise<StockTransaction[]> {
+  return apiFetch<StockTransaction[]>(`/stocks/${stockId}/transactions`);
+}
+
+export async function deleteStockTransaction(id: number): Promise<void> {
+  await apiFetch<unknown>(`/stocks/transactions/${id}`, { method: "DELETE" });
+}
+
+export async function deleteStock(id: number): Promise<void> {
+  await apiFetch<unknown>(`/stocks/${id}`, { method: "DELETE" });
+}
+
+export async function parseStocksFile(file: File): Promise<ParsedStocksResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const url = `${getBaseUrl()}/stocks/import/parse`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: getAuthHeader() },
+    body: formData,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function confirmStocksImport(
+  data: StockImportConfirmPayload
+): Promise<{ added: number; skipped: number }> {
+  return apiFetch<{ added: number; skipped: number }>("/stocks/import/confirm", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}

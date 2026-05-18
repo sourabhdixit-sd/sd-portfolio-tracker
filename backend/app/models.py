@@ -48,6 +48,34 @@ class Transaction(Base):
     fund: Mapped["Fund"] = relationship("Fund", back_populates="transactions")
 
 
+class Stock(Base):
+    __tablename__ = "stocks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    isin: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    symbol: Mapped[str] = mapped_column(String, nullable=False)
+    sector: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
+
+    transactions: Mapped[list["StockTransaction"]] = relationship("StockTransaction", back_populates="stock")
+
+
+class StockTransaction(Base):
+    __tablename__ = "stock_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    stock_id: Mapped[int] = mapped_column(Integer, ForeignKey("stocks.id"), nullable=False)
+    transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    shares: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
+    buy_price: Mapped[float] = mapped_column(Numeric(10, 4), nullable=False)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
+
+    stock: Mapped["Stock"] = relationship("Stock", back_populates="transactions")
+
+
 class SignalConfig(Base):
     __tablename__ = "signal_config"
 

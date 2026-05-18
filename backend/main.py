@@ -5,7 +5,7 @@ from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import engine, get_db
 from app.models import Base, Fund, NavHistory, Transaction
-from app.routers import funds, portfolio, signals, sync
+from app.routers import funds, portfolio, signals, sync, stocks
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.auth import get_current_user
 
@@ -44,6 +44,7 @@ app.include_router(funds.router)
 app.include_router(portfolio.router)
 app.include_router(signals.router)
 app.include_router(sync.router)
+app.include_router(stocks.router)
 
 
 @app.get("/health")

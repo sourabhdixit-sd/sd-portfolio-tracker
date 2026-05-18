@@ -140,3 +140,54 @@ class ImportFund(BaseModel):
 class ImportConfirmPayload(BaseModel):
     transaction_date: str  # ISO date string "2026-03-08"
     funds: List[ImportFund]
+
+
+# Stock schemas
+class StockImportItem(BaseModel):
+    stock_name: str
+    isin: str
+    symbol: str
+    shares: float
+    avg_cost: float
+    excluded: bool = False
+
+
+class StockImportConfirmPayload(BaseModel):
+    transaction_date: str
+    stocks: List[StockImportItem]
+
+
+class StockTransactionCreate(BaseModel):
+    stock_id: int
+    transaction_date: date
+    shares: float
+    buy_price: float
+    notes: Optional[str] = None
+
+
+class StockTransactionOut(BaseModel):
+    id: int
+    stock_id: int
+    transaction_date: date
+    shares: float
+    buy_price: float
+    notes: Optional[str]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class StockPortfolioOut(BaseModel):
+    stock_id: int
+    stock_name: str
+    isin: str
+    symbol: str
+    sector: Optional[str]
+    total_shares: float
+    avg_buy_price: float
+    current_price: Optional[float]
+    current_value: Optional[float]
+    invested_value: float
+    gain_loss: Optional[float]
+    gain_loss_pct: Optional[float]
+    xirr: Optional[float]
