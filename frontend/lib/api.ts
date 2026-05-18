@@ -125,6 +125,10 @@ export async function deleteFund(id: number): Promise<void> {
   await apiFetch<unknown>(`/funds/${id}`, { method: "DELETE" });
 }
 
+export async function rematchFunds(): Promise<{ checked: number; updated: number }> {
+  return apiFetch<{ checked: number; updated: number }>("/funds/rematch", { method: "POST" });
+}
+
 // Portfolio endpoints
 export async function getPortfolio(): Promise<PortfolioEntry[]> {
   return apiFetch<PortfolioEntry[]>("/portfolio");

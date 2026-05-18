@@ -1,6 +1,7 @@
 import { getSignals, getSignalConfig, getSyncStatus, getPortfolio } from "@/lib/api";
 import SignalBadge from "@/components/SignalBadge";
 import SyncButton from "@/components/SyncButton";
+import RematchButton from "@/components/RematchButton";
 import ThresholdForm from "@/components/ThresholdForm";
 import type { FundWithSignal, Signal } from "@/lib/api";
 
@@ -80,7 +81,10 @@ export default async function DashboardPage() {
             Last sync: {formatLastSync(lastSync)}
           </p>
         </div>
-        <SyncButton />
+        <div className="flex items-center gap-2">
+          <RematchButton />
+          <SyncButton />
+        </div>
       </div>
 
       {/* Stats row */}

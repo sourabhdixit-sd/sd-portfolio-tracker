@@ -1,7 +1,8 @@
+import asyncio
 from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status
-from sqlalchemy import select
+from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, AsyncSessionLocal
 from app.models import Fund, NavHistory, Transaction
@@ -9,7 +10,7 @@ from app.schemas import FundCreate, FundOut, ImportConfirmPayload
 from app.auth import get_current_user
 from app.services.signal_engine import compute_signal
 from app.services.portfolio_parser import parse_pdf, parse_excel
-from app.services.isin_lookup import lookup_all_funds
+from app.services.isin_lookup import lookup_all_funds, lookup_amfi_by_name
 from app.services.nav_fetcher import fetch_and_store_nav
 
 router = APIRouter(prefix="/funds", tags=["funds"])
@@ -201,6 +202,40 @@ async def confirm_import(
         "funds_skipped": funds_skipped,
         "transactions_added": transactions_added,
     }
+
+
+@router.post("/rematch")
+async def rematch_amfi_codes(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(select(Fund).where(Fund.is_active == True))
+    funds = result.scalars().all()
+    fund_snapshot = [(f.id, f.name, f.amfi_code) for f in funds]
+
+    async def lookup_one(fund_id: int, name: str, current_code: str):
+        new = await asyncio.to_thread(lookup_amfi_by_name, name)
+        return fund_id, current_code, new
+
+    lookups = await asyncio.gather(*[lookup_one(*f) for f in fund_snapshot])
+
+    updated: list[tuple[int, str]] = []
+    for fund_id, current_code, lookup in lookups:
+        if lookup is None or lookup["amfi_code"] == current_code:
+            continue
+        new_code = lookup["amfi_code"]
+        await db.execute(sql_delete(NavHistory).where(NavHistory.fund_id == fund_id))
+        fund_row = next(f for f in funds if f.id == fund_id)
+        fund_row.amfi_code = new_code
+        updated.append((fund_id, new_code))
+        print(f"[rematch] {fund_row.name}: {current_code} → {new_code}")
+
+    await db.flush()
+    if updated:
+        background_tasks.add_task(_fetch_navs_background, updated)
+
+    return {"checked": len(fund_snapshot), "updated": len(updated)}
 
 
 @router.delete("/{fund_id}", status_code=status.HTTP_204_NO_CONTENT)
