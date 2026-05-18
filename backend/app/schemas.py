@@ -186,8 +186,17 @@ class StockPortfolioOut(BaseModel):
     total_shares: float
     avg_buy_price: float
     current_price: Optional[float]
+    price_updated_at: Optional[datetime]
     current_value: Optional[float]
     invested_value: float
     gain_loss: Optional[float]
     gain_loss_pct: Optional[float]
     xirr: Optional[float]
+    show_on_dashboard: bool = False
+
+
+# Unified import schemas
+class UnifiedImportConfirmPayload(BaseModel):
+    transaction_date: str
+    funds: List[ImportFund]
+    stocks: List[StockImportItem]

@@ -57,6 +57,9 @@ class Stock(Base):
     symbol: Mapped[str] = mapped_column(String, nullable=False)
     sector: Mapped[str | None] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    show_on_dashboard: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    current_price: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    price_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
 
     transactions: Mapped[list["StockTransaction"]] = relationship("StockTransaction", back_populates="stock")

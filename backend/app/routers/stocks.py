@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from scipy.optimize import brentq
 
-from app.database import get_db
+from app.database import get_db, AsyncSessionLocal
 from app.models import Stock, StockTransaction
 from app.schemas import (
     StockImportConfirmPayload,
@@ -44,9 +44,42 @@ def _compute_stock_xirr(transactions: list[StockTransaction], current_value: flo
 
 
 def _suggest_symbol(name: str) -> str:
-    """Best-effort NSE ticker from stock name — user can correct in the UI."""
     cleaned = name.upper().split()[0] if name else ""
     return f"{cleaned}.NS" if cleaned else ""
+
+
+def _build_portfolio_out(stock: Stock, txns: list[StockTransaction]) -> StockPortfolioOut | None:
+    if not txns:
+        return None
+    total_shares = sum(float(t.shares) for t in txns)
+    total_invested = sum(float(t.shares) * float(t.buy_price) for t in txns)
+    avg_buy_price = round(total_invested / total_shares, 4) if total_shares else 0.0
+    current_price = float(stock.current_price) if stock.current_price is not None else None
+    current_value = round(total_shares * current_price, 2) if current_price else None
+    gain_loss = round(current_value - total_invested, 2) if current_value is not None else None
+    gain_loss_pct = (
+        round(gain_loss / total_invested * 100, 2)
+        if gain_loss is not None and total_invested > 0
+        else None
+    )
+    xirr = _compute_stock_xirr(txns, current_value)
+    return StockPortfolioOut(
+        stock_id=stock.id,
+        stock_name=stock.name,
+        isin=stock.isin,
+        symbol=stock.symbol,
+        sector=stock.sector,
+        total_shares=round(total_shares, 4),
+        avg_buy_price=avg_buy_price,
+        current_price=current_price,
+        price_updated_at=stock.price_updated_at,
+        current_value=current_value,
+        invested_value=round(total_invested, 2),
+        gain_loss=gain_loss,
+        gain_loss_pct=gain_loss_pct,
+        xirr=xirr,
+        show_on_dashboard=stock.show_on_dashboard,
+    )
 
 
 @router.post("/import/parse")
@@ -64,9 +97,8 @@ async def parse_stocks_file(
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type. Upload a .pdf or .xlsx file.")
 
-    stocks_out = []
-    for isin, s in parsed["stocks"].items():
-        stocks_out.append({
+    stocks_out = [
+        {
             "stock_name": s["stock_name"],
             "isin": isin,
             "suggested_symbol": _suggest_symbol(s["stock_name"]),
@@ -74,7 +106,9 @@ async def parse_stocks_file(
             "avg_cost": s["avg_cost"],
             "investment_amount": s["investment_amount"],
             "market_price": s["market_price"],
-        })
+        }
+        for isin, s in parsed["stocks"].items()
+    ]
 
     return {"report_date": parsed["report_date"], "stocks": stocks_out}
 
@@ -102,11 +136,7 @@ async def confirm_stocks_import(
             skipped += 1
             continue
 
-        stock = Stock(
-            name=item.stock_name,
-            isin=item.isin,
-            symbol=item.symbol.strip(),
-        )
+        stock = Stock(name=item.stock_name, isin=item.isin, symbol=item.symbol.strip())
         db.add(stock)
         await db.flush()
         await db.refresh(stock)
@@ -134,56 +164,89 @@ async def get_stock_portfolio(
     if not stocks:
         return []
 
-    # Load transactions per stock
-    stock_txns: dict[int, list[StockTransaction]] = {}
+    output = []
     for stock in stocks:
         txn_result = await db.execute(
             select(StockTransaction)
             .where(StockTransaction.stock_id == stock.id)
             .order_by(StockTransaction.transaction_date.asc())
         )
-        stock_txns[stock.id] = txn_result.scalars().all()
+        txns = txn_result.scalars().all()
+        entry = _build_portfolio_out(stock, txns)
+        if entry:
+            output.append(entry)
 
-    # Fetch live prices in parallel
-    symbols = [s.symbol for s in stocks]
-    prices = await fetch_prices_batch(symbols)
+    return output
+
+
+@router.get("/watchlist", response_model=list[StockPortfolioOut])
+async def get_stock_watchlist(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Stock).where(Stock.is_active == True, Stock.show_on_dashboard == True)
+    )
+    stocks = result.scalars().all()
 
     output = []
     for stock in stocks:
-        txns = stock_txns.get(stock.id, [])
-        if not txns:
-            continue
-
-        total_shares = sum(float(t.shares) for t in txns)
-        total_invested = sum(float(t.shares) * float(t.buy_price) for t in txns)
-        avg_buy_price = round(total_invested / total_shares, 4) if total_shares else 0.0
-        current_price = prices.get(stock.symbol)
-        current_value = round(total_shares * current_price, 2) if current_price else None
-        gain_loss = round(current_value - total_invested, 2) if current_value is not None else None
-        gain_loss_pct = (
-            round(gain_loss / total_invested * 100, 2)
-            if gain_loss is not None and total_invested > 0
-            else None
+        txn_result = await db.execute(
+            select(StockTransaction)
+            .where(StockTransaction.stock_id == stock.id)
+            .order_by(StockTransaction.transaction_date.asc())
         )
-        xirr = _compute_stock_xirr(txns, current_value)
-
-        output.append(StockPortfolioOut(
-            stock_id=stock.id,
-            stock_name=stock.name,
-            isin=stock.isin,
-            symbol=stock.symbol,
-            sector=stock.sector,
-            total_shares=round(total_shares, 4),
-            avg_buy_price=avg_buy_price,
-            current_price=current_price,
-            current_value=current_value,
-            invested_value=round(total_invested, 2),
-            gain_loss=gain_loss,
-            gain_loss_pct=gain_loss_pct,
-            xirr=xirr,
-        ))
+        txns = txn_result.scalars().all()
+        entry = _build_portfolio_out(stock, txns)
+        if entry:
+            output.append(entry)
 
     return output
+
+
+@router.post("/sync")
+async def sync_stock_prices(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(select(Stock).where(Stock.is_active == True))
+    stocks = result.scalars().all()
+
+    if not stocks:
+        return {"synced": 0, "failed": 0}
+
+    symbols = [s.symbol for s in stocks]
+    prices = await fetch_prices_batch(symbols)
+
+    synced = failed = 0
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    for stock in stocks:
+        price = prices.get(stock.symbol)
+        if price is not None:
+            stock.current_price = price
+            stock.price_updated_at = now
+            synced += 1
+        else:
+            failed += 1
+
+    await db.flush()
+    return {"synced": synced, "failed": failed}
+
+
+@router.patch("/{stock_id}/watchlist")
+async def toggle_watchlist(
+    stock_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(select(Stock).where(Stock.id == stock_id))
+    stock = result.scalar_one_or_none()
+    if not stock:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    stock.show_on_dashboard = not stock.show_on_dashboard
+    await db.flush()
+    return {"stock_id": stock_id, "show_on_dashboard": stock.show_on_dashboard}
 
 
 @router.get("/{stock_id}/transactions", response_model=list[StockTransactionOut])

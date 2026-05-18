@@ -14,12 +14,15 @@ from app.auth import get_current_user
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Add new signal_config columns if upgrading an existing DB
+        # Add new columns to existing tables if upgrading
         for stmt in [
             "ALTER TABLE signal_config ADD COLUMN IF NOT EXISTS rsi_oversold NUMERIC(5,2) NOT NULL DEFAULT 30.0",
             "ALTER TABLE signal_config ADD COLUMN IF NOT EXISTS rsi_overbought NUMERIC(5,2) NOT NULL DEFAULT 70.0",
             "ALTER TABLE signal_config ADD COLUMN IF NOT EXISTS min_buy_signals INTEGER NOT NULL DEFAULT 2",
             "ALTER TABLE signal_config ADD COLUMN IF NOT EXISTS min_sell_signals INTEGER NOT NULL DEFAULT 2",
+            "ALTER TABLE stocks ADD COLUMN IF NOT EXISTS show_on_dashboard BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE stocks ADD COLUMN IF NOT EXISTS current_price NUMERIC(12,4)",
+            "ALTER TABLE stocks ADD COLUMN IF NOT EXISTS price_updated_at TIMESTAMP",
         ]:
             await conn.execute(text(stmt))
     start_scheduler()

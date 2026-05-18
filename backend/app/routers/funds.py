@@ -6,7 +6,9 @@ from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, AsyncSessionLocal
 from app.models import Fund, NavHistory, Transaction
-from app.schemas import FundCreate, FundOut, ImportConfirmPayload
+from app.schemas import FundCreate, FundOut, ImportConfirmPayload, UnifiedImportConfirmPayload
+from app.services.portfolio_parser import parse_stocks_from_pdf, parse_stocks_from_excel
+from app.models import Stock, StockTransaction
 from app.auth import get_current_user
 from app.services.signal_engine import compute_signal
 from app.services.portfolio_parser import parse_pdf, parse_excel
@@ -236,6 +238,111 @@ async def rematch_amfi_codes(
         background_tasks.add_task(_fetch_navs_background, updated)
 
     return {"checked": len(fund_snapshot), "updated": len(updated)}
+
+
+@router.post("/import/unified/parse")
+async def unified_parse(
+    file: UploadFile = File(...),
+    _: str = Depends(get_current_user),
+):
+    content = await file.read()
+    filename = (file.filename or "").lower()
+
+    if filename.endswith(".pdf"):
+        mf_parsed = parse_pdf(content)
+        eq_parsed = parse_stocks_from_pdf(content)
+    elif filename.endswith(".xlsx"):
+        mf_parsed = parse_excel(content)
+        eq_parsed = parse_stocks_from_excel(content)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file type. Upload a .pdf or .xlsx file.")
+
+    funds_list = lookup_all_funds(mf_parsed["funds"])
+
+    def _suggest_symbol(name: str) -> str:
+        cleaned = name.upper().split()[0] if name else ""
+        return f"{cleaned}.NS" if cleaned else ""
+
+    stocks_list = [
+        {
+            "stock_name": s["stock_name"],
+            "isin": isin,
+            "suggested_symbol": _suggest_symbol(s["stock_name"]),
+            "shares": s["shares"],
+            "avg_cost": s["avg_cost"],
+            "investment_amount": s["investment_amount"],
+            "market_price": s["market_price"],
+        }
+        for isin, s in eq_parsed["stocks"].items()
+    ]
+
+    return {
+        "report_date": mf_parsed["report_date"] or eq_parsed["report_date"],
+        "funds": funds_list,
+        "stocks": stocks_list,
+    }
+
+
+@router.post("/import/unified/confirm")
+async def unified_confirm(
+    payload: UnifiedImportConfirmPayload,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    try:
+        txn_date = date_type.fromisoformat(payload.transaction_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid transaction_date format. Use YYYY-MM-DD.")
+
+    funds_added = funds_skipped = stocks_added = stocks_skipped = 0
+    new_funds: list[Fund] = []
+
+    for import_fund in payload.funds:
+        if import_fund.excluded:
+            funds_skipped += 1
+            continue
+        existing = await db.execute(select(Fund).where(Fund.amfi_code == import_fund.amfi_code))
+        if existing.scalar_one_or_none():
+            funds_skipped += 1
+            continue
+        fund = Fund(name=import_fund.fund_name, amfi_code=import_fund.amfi_code, sector=import_fund.sector)
+        db.add(fund)
+        await db.flush()
+        await db.refresh(fund)
+        for txn in import_fund.transactions:
+            db.add(Transaction(fund_id=fund.id, transaction_date=txn_date, units=txn.units, buy_nav=txn.avg_cost))
+        await db.flush()
+        funds_added += 1
+        new_funds.append(fund)
+
+    for item in payload.stocks:
+        if item.excluded:
+            stocks_skipped += 1
+            continue
+        existing = await db.execute(select(Stock).where(Stock.isin == item.isin))
+        if existing.scalar_one_or_none():
+            stocks_skipped += 1
+            continue
+        stock = Stock(name=item.stock_name, isin=item.isin, symbol=item.symbol.strip())
+        db.add(stock)
+        await db.flush()
+        await db.refresh(stock)
+        db.add(StockTransaction(stock_id=stock.id, transaction_date=txn_date, shares=item.shares, buy_price=item.avg_cost))
+        await db.flush()
+        stocks_added += 1
+
+    await db.commit()
+
+    if new_funds:
+        background_tasks.add_task(_fetch_navs_background, [(f.id, f.amfi_code) for f in new_funds])
+
+    return {
+        "funds_added": funds_added,
+        "funds_skipped": funds_skipped,
+        "stocks_added": stocks_added,
+        "stocks_skipped": stocks_skipped,
+    }
 
 
 @router.delete("/{fund_id}", status_code=status.HTTP_204_NO_CONTENT)

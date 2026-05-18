@@ -301,11 +301,13 @@ export interface StockPortfolioEntry {
   total_shares: number;
   avg_buy_price: number;
   current_price: number | null;
+  price_updated_at: string | null;
   current_value: number | null;
   invested_value: number;
   gain_loss: number | null;
   gain_loss_pct: number | null;
   xirr: number | null;
+  show_on_dashboard: boolean;
 }
 
 export interface StockTransaction {
@@ -383,6 +385,70 @@ export async function confirmStocksImport(
   data: StockImportConfirmPayload
 ): Promise<{ added: number; skipped: number }> {
   return apiFetch<{ added: number; skipped: number }>("/stocks/import/confirm", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function syncStockPrices(): Promise<{ synced: number; failed: number }> {
+  return apiFetch<{ synced: number; failed: number }>("/stocks/sync", { method: "POST" });
+}
+
+export async function getStockWatchlist(): Promise<StockPortfolioEntry[]> {
+  return apiFetch<StockPortfolioEntry[]>("/stocks/watchlist");
+}
+
+export async function toggleStockWatchlist(stockId: number): Promise<{ stock_id: number; show_on_dashboard: boolean }> {
+  return apiFetch<{ stock_id: number; show_on_dashboard: boolean }>(`/stocks/${stockId}/watchlist`, { method: "PATCH" });
+}
+
+// Unified import types
+export interface UnifiedParseResult {
+  report_date: string | null;
+  funds: ParsedFund[];
+  stocks: ParsedStock[];
+}
+
+export interface UnifiedImportConfirmPayload {
+  transaction_date: string;
+  funds: Array<{
+    fund_name: string;
+    amfi_code: string;
+    sector?: string;
+    transactions: Array<{ units: number; avg_cost: number }>;
+    excluded: boolean;
+  }>;
+  stocks: Array<{
+    stock_name: string;
+    isin: string;
+    symbol: string;
+    shares: number;
+    avg_cost: number;
+    excluded: boolean;
+  }>;
+}
+
+export async function parsePortfolioUnified(file: File): Promise<UnifiedParseResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const url = `${getBaseUrl()}/funds/import/unified/parse`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: getAuthHeader() },
+    body: formData,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function confirmPortfolioUnified(
+  data: UnifiedImportConfirmPayload
+): Promise<{ funds_added: number; stocks_added: number; funds_skipped: number; stocks_skipped: number }> {
+  return apiFetch("/funds/import/unified/confirm", {
     method: "POST",
     body: JSON.stringify(data),
   });
