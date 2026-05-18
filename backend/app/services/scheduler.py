@@ -10,9 +10,14 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 
 
 async def scheduled_sync():
+    try:
+        await sync_all_funds()
+    except Exception as e:
+        print(f"[scheduler] sync_all_funds failed: {e}")
+        raise
+
     async with AsyncSessionLocal() as db:
         try:
-            await sync_all_funds(db)
             result = await db.execute(select(SignalConfig).where(SignalConfig.id == 1))
             config = result.scalar_one_or_none()
             if config is None:

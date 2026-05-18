@@ -13,15 +13,20 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 
 
 async def run_sync_background():
+    try:
+        await sync_all_funds()
+    except Exception as e:
+        print(f"[sync] sync_all_funds failed: {e}")
+        return
+
     async with AsyncSessionLocal() as db:
         try:
-            await sync_all_funds(db)
             config = await get_or_create_signal_config(db)
             config.last_sync_at = datetime.now(timezone.utc)
             await db.commit()
         except Exception as e:
             await db.rollback()
-            print(f"[sync] Background sync failed: {e}")
+            print(f"[sync] last_sync_at update failed: {e}")
 
 
 @router.post("")
