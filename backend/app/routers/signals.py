@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +53,6 @@ async def update_signal_config(
     config = await get_or_create_signal_config(db)
     config.buy_threshold_pct = payload.buy_threshold_pct
     config.sell_threshold_pct = payload.sell_threshold_pct
-    config.updated_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(config)
     return config

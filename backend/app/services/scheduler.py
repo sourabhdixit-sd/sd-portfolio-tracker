@@ -23,7 +23,7 @@ async def scheduled_sync():
             if config is None:
                 config = SignalConfig(id=1, buy_threshold_pct=10.0, sell_threshold_pct=20.0)
                 db.add(config)
-            config.last_sync_at = datetime.now(timezone.utc)
+            config.last_sync_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await db.commit()
         except Exception:
             await db.rollback()

@@ -22,7 +22,7 @@ async def run_sync_background():
     async with AsyncSessionLocal() as db:
         try:
             config = await get_or_create_signal_config(db)
-            config.last_sync_at = datetime.now(timezone.utc)
+            config.last_sync_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await db.commit()
         except Exception as e:
             await db.rollback()
