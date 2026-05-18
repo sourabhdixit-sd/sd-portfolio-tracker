@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 
 
@@ -99,3 +99,21 @@ class SyncStatusOut(BaseModel):
 
 class HealthOut(BaseModel):
     status: str
+
+
+class ImportTransaction(BaseModel):
+    units: float
+    avg_cost: float
+
+
+class ImportFund(BaseModel):
+    fund_name: str
+    amfi_code: str
+    sector: Optional[str] = None
+    transactions: List[ImportTransaction]
+    excluded: bool = False
+
+
+class ImportConfirmPayload(BaseModel):
+    transaction_date: str  # ISO date string "2026-03-08"
+    funds: List[ImportFund]

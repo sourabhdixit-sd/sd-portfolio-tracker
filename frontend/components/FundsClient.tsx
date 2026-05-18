@@ -7,6 +7,7 @@ import type { Fund, FundWithSignal, NavPoint } from "@/lib/api";
 import SignalBadge from "@/components/SignalBadge";
 import NavChart from "@/components/NavChart";
 import AddFundForm from "@/components/AddFundForm";
+import ImportFundsModal from "@/components/ImportFundsModal";
 
 interface FundsClientProps {
   funds: FundWithSignal[];
@@ -20,6 +21,7 @@ function formatINR(value: number | null | undefined): string {
 export default function FundsClient({ funds }: FundsClientProps) {
   const router = useRouter();
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [expandedFundId, setExpandedFundId] = useState<number | null>(null);
   const [navData, setNavData] = useState<Record<number, NavPoint[]>>({});
   const [navLoading, setNavLoading] = useState<Record<number, boolean>>({});
@@ -67,6 +69,26 @@ export default function FundsClient({ funds }: FundsClientProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-100">Funds</h1>
+        <div className="flex items-center gap-2">
+        <button
+          onClick={() => setShowImport(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-transparent hover:bg-slate-700 text-slate-300 hover:text-slate-100 text-sm font-medium rounded-md border border-slate-600 transition-colors"
+        >
+          <svg
+            className="w-3.5 h-3.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+            />
+          </svg>
+          Import PDF/Excel
+        </button>
         <button
           onClick={() => setShowAddForm((v) => !v)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors"
@@ -86,6 +108,7 @@ export default function FundsClient({ funds }: FundsClientProps) {
           </svg>
           {showAddForm ? "Cancel" : "Add Fund"}
         </button>
+        </div>
       </div>
 
       {/* Add Fund Form */}
@@ -226,6 +249,16 @@ export default function FundsClient({ funds }: FundsClientProps) {
           </div>
         )}
       </div>
+
+      {showImport && (
+        <ImportFundsModal
+          onClose={() => setShowImport(false)}
+          onSuccess={() => {
+            setShowImport(false);
+            router.refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

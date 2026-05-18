@@ -184,3 +184,73 @@ export async function getSyncStatus(): Promise<SyncStatus> {
 export async function getNavHistory(fundId: number): Promise<NavPoint[]> {
   return apiFetch<NavPoint[]>(`/funds/${fundId}/nav-history`);
 }
+
+// Portfolio import types
+export interface ParsedTransaction {
+  units: number;
+  avg_cost: number;
+  investment_amount: number;
+  market_price: number;
+}
+
+export interface ParsedFund {
+  fund_name: string;
+  isin: string;
+  amfi_code: string | null;
+  matched_name: string | null;
+  needs_manual_amfi: boolean;
+  transactions: ParsedTransaction[];
+  total_units: number;
+  total_invested: number;
+}
+
+export interface ParsedImportResult {
+  report_date: string;
+  funds: ParsedFund[];
+}
+
+export interface ImportConfirmPayload {
+  transaction_date: string;
+  funds: Array<{
+    fund_name: string;
+    amfi_code: string;
+    sector?: string;
+    transactions: Array<{ units: number; avg_cost: number }>;
+    excluded: boolean;
+  }>;
+}
+
+export interface ImportResult {
+  funds_added: number;
+  funds_skipped: number;
+  transactions_added: number;
+}
+
+// Portfolio import endpoints
+export async function parsePortfolioFile(
+  file: File
+): Promise<ParsedImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const url = `${getBaseUrl()}/funds/import/parse`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: getAuthHeader() },
+    body: formData,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function confirmPortfolioImport(
+  data: ImportConfirmPayload
+): Promise<ImportResult> {
+  return apiFetch<ImportResult>("/funds/import/confirm", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
