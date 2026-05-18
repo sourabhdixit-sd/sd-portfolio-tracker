@@ -25,8 +25,10 @@ async def list_signals(
         output.append(SignalOut(
             id=fund.id,
             fund_id=fund.id,
+            name=fund.name,
             fund_name=fund.name,
             amfi_code=fund.amfi_code,
+            sector=fund.sector,
             **sig,
         ))
 

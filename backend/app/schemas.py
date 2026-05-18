@@ -71,8 +71,10 @@ class PortfolioFundOut(BaseModel):
 class SignalOut(BaseModel):
     id: int
     fund_id: int
+    name: str
     fund_name: str
     amfi_code: str
+    sector: Optional[str] = None
     signal: str
     current_nav: Optional[float]
     high_52w: Optional[float]

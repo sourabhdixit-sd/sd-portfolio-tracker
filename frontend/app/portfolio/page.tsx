@@ -14,8 +14,8 @@ export default async function PortfolioPage() {
 
     if (portfolioData.status === "fulfilled") portfolio = portfolioData.value;
     if (fundsData.status === "fulfilled") funds = fundsData.value;
-  } catch {
-    // Show empty state on error
+  } catch (err) {
+    console.error("[Portfolio] Failed to fetch data:", err);
   }
 
   return <PortfolioClient portfolio={portfolio} funds={funds} />;

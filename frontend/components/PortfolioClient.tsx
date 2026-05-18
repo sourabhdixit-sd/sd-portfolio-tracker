@@ -25,7 +25,7 @@ function formatPct(value: number | null | undefined): string {
 function formatXIRR(value: number | null | undefined): string {
   if (value == null) return "—";
   const sign = value > 0 ? "+" : "";
-  return `${sign}${(value * 100).toFixed(2)}%`;
+  return `${sign}${value.toFixed(2)}%`;
 }
 
 function getPctClass(value: number | null | undefined): string {

@@ -7,8 +7,8 @@ export default async function FundsPage() {
 
   try {
     funds = await getSignals();
-  } catch {
-    // Show empty state on error
+  } catch (err) {
+    console.error("[Funds] Failed to fetch signals:", err);
   }
 
   return <FundsClient funds={funds} />;

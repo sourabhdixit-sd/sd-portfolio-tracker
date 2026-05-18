@@ -62,8 +62,8 @@ export default async function DashboardPage() {
         (e) => e.gain_loss != null && e.gain_loss > 0
       ).length;
     }
-  } catch {
-    // Show empty state on error
+  } catch (err) {
+    console.error("[Dashboard] Failed to fetch data:", err);
   }
 
   const buySignals = signals.filter((s) => s.signal === "BUY");
