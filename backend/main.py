@@ -1,10 +1,13 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import engine
-from app.models import Base
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import engine, get_db
+from app.models import Base, Fund, NavHistory, Transaction
 from app.routers import funds, portfolio, signals, sync
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.auth import get_current_user
 
 
 @asynccontextmanager
@@ -38,3 +41,23 @@ app.include_router(sync.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
+
+
+@app.get("/status")
+async def status(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    fund_count = await db.scalar(select(func.count(Fund.id)).where(Fund.is_active == True))
+    nav_count = await db.scalar(select(func.count(NavHistory.id)))
+    txn_count = await db.scalar(select(func.count(Transaction.id)))
+    return {
+        "funds": fund_count or 0,
+        "nav_entries": nav_count or 0,
+        "transactions": txn_count or 0,
+    }

@@ -2,50 +2,62 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { triggerSync } from "@/lib/api";
+import { triggerSync, getSyncStatus } from "@/lib/api";
+
+const POLL_INTERVAL_MS = 3000;
+const TIMEOUT_MS = 120000;
 
 export default function SyncButton() {
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "syncing" | "done" | "error">("idle");
-  const [secondsLeft, setSecondsLeft] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function clearTimer() {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
   }
 
-  useEffect(() => () => clearTimer(), []);
+  useEffect(() => () => stopPolling(), []);
 
   async function handleSync() {
     setStatus("syncing");
     setErrorMsg("");
-    setSecondsLeft(20);
 
     try {
       await triggerSync();
     } catch (err) {
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Sync failed");
-      setTimeout(() => setStatus("idle"), 4000);
+      setTimeout(() => setStatus("idle"), 5000);
       return;
     }
 
-    // Sync started in background — count down 20s then refresh
-    let remaining = 20;
-    timerRef.current = setInterval(() => {
-      remaining -= 1;
-      setSecondsLeft(remaining);
-      if (remaining <= 0) {
-        clearTimer();
-        setStatus("done");
-        router.refresh();
-        setTimeout(() => setStatus("idle"), 3000);
+    const syncStarted = new Date();
+
+    // Poll sync/status until last_sync_at is newer than when we started
+    pollRef.current = setInterval(async () => {
+      try {
+        const s = await getSyncStatus();
+        if (s.last_sync_at && new Date(s.last_sync_at) > syncStarted) {
+          stopPolling();
+          setStatus("done");
+          router.refresh();
+          setTimeout(() => setStatus("idle"), 4000);
+        }
+      } catch {
+        // keep polling on transient errors
       }
-    }, 1000);
+    }, POLL_INTERVAL_MS);
+
+    // Give up after 2 minutes
+    timeoutRef.current = setTimeout(() => {
+      stopPolling();
+      setStatus("error");
+      setErrorMsg("Sync timed out — check Railway deployment status");
+      setTimeout(() => setStatus("idle"), 6000);
+    }, TIMEOUT_MS);
   }
 
   return (
@@ -67,19 +79,13 @@ export default function SyncButton() {
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
         )}
-        {status === "syncing"
-          ? `Syncing… (${secondsLeft}s)`
-          : status === "done"
-          ? "Synced ✓"
-          : status === "error"
-          ? "Failed"
-          : "Sync Now"}
+        {status === "syncing" ? "Syncing…" : status === "done" ? "Synced ✓" : status === "error" ? "Failed" : "Sync Now"}
       </button>
       {status === "syncing" && (
-        <span className="text-xs text-slate-400">Fetching live NAV data for all funds…</span>
+        <span className="text-xs text-slate-400">Fetching live NAV data…</span>
       )}
       {status === "error" && errorMsg && (
-        <span className="text-xs text-red-400">{errorMsg}</span>
+        <span className="text-xs text-red-400 text-right max-w-[200px]">{errorMsg}</span>
       )}
     </div>
   );

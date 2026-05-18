@@ -185,6 +185,27 @@ export async function getNavHistory(fundId: number): Promise<NavPoint[]> {
   return apiFetch<NavPoint[]>(`/funds/${fundId}/nav-history`);
 }
 
+// Diagnostics
+export async function pingBackend(): Promise<boolean> {
+  try {
+    const url = `${getBaseUrl()}/ping`;
+    const res = await fetch(url, { cache: "no-store" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export interface BackendStatus {
+  funds: number;
+  nav_entries: number;
+  transactions: number;
+}
+
+export async function getBackendStatus(): Promise<BackendStatus> {
+  return apiFetch<BackendStatus>("/status");
+}
+
 // Portfolio import types
 export interface ParsedTransaction {
   units: number;
