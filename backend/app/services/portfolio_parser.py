@@ -58,13 +58,12 @@ def _parse_holding_lines(full_text: str) -> dict:
         fund_name = line[:isin_start].strip()
         remainder = line[isin_end:].strip()
 
-        # remainder should be: {open_qty} {market_price} {market_value} {investment_amount} {avg_cost} {unrealized_pnl} {AssetType}
+        # remainder should be: {open_qty} {market_price} {market_value} {investment_amount} {avg_cost} ...
         tokens = remainder.split()
-        if len(tokens) < 7:
+        if len(tokens) < 5:
             continue
 
-        asset_type = tokens[-1]
-        if asset_type != "MutualFund":
+        if not isin.startswith("INF"):  # INF = mutual fund ISIN prefix (SEBI standard)
             continue
 
         numeric_tokens = tokens[:7]
@@ -123,11 +122,10 @@ def _parse_stock_lines(full_text: str) -> dict:
         remainder = line[isin_end:].strip()
 
         tokens = remainder.split()
-        if len(tokens) < 7:
+        if len(tokens) < 5:
             continue
 
-        asset_type = tokens[-1]
-        if asset_type != "Stock":
+        if not isin.startswith("INE"):  # INE = equity ISIN prefix (SEBI standard)
             continue
 
         numeric_tokens = tokens[:7]
@@ -227,12 +225,10 @@ def parse_stocks_from_excel(file_bytes: bytes) -> dict:
                 return None
             return row[idx]
 
-        asset_type = str(get(asset_col) or "").strip()
-        if asset_type != "Stock":
-            continue
-
         isin = str(get(isin_col) or "").strip()
         if not ISIN_PATTERN.match(isin):
+            continue
+        if not isin.startswith("INE"):  # INE = equity ISIN prefix
             continue
 
         stock_name = str(get(name_col) or "").strip()
@@ -346,12 +342,10 @@ def parse_excel(file_bytes: bytes) -> dict:
                 return None
             return row[idx]
 
-        asset_type = str(get(asset_col) or "").strip()
-        if asset_type != "MutualFund":
-            continue
-
         isin = str(get(isin_col) or "").strip()
         if not ISIN_PATTERN.match(isin):
+            continue
+        if not isin.startswith("INF"):  # INF = mutual fund ISIN prefix
             continue
 
         fund_name = str(get(name_col) or "").strip()
