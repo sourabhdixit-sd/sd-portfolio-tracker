@@ -61,7 +61,7 @@ function getBaseUrl(): string {
 }
 
 function getAuthHeader(): string {
-  const password = process.env.APP_PASSWORD ?? "changeme";
+  const password = process.env.NEXT_PUBLIC_APP_PASSWORD ?? "changeme";
   const credentials = `admin:${password}`;
   const encoded =
     typeof btoa !== "undefined"

@@ -12,7 +12,7 @@ export function middleware(request: NextRequest) {
   }
 
   const authHeader = request.headers.get("authorization");
-  const appPassword = process.env.APP_PASSWORD ?? "changeme";
+  const appPassword = process.env.NEXT_PUBLIC_APP_PASSWORD ?? process.env.APP_PASSWORD ?? "changeme";
 
   if (authHeader && authHeader.startsWith("Basic ")) {
     const base64Credentials = authHeader.slice("Basic ".length);
