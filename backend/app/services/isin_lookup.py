@@ -20,9 +20,20 @@ def clean_fund_name(name: str) -> str:
     return name.strip()
 
 
+def _score_scheme(name: str) -> int:
+    """Prefer Direct Growth plans — most retail investors hold these."""
+    n = name.lower()
+    score = 0
+    if "direct" in n: score += 4
+    if "growth" in n: score += 2
+    if "regular" in n: score -= 3
+    if "dividend" in n or "idcw" in n: score -= 2
+    return score
+
+
 def lookup_amfi_by_name(fund_name: str) -> dict | None:
     """
-    Search mfapi.in for a fund by name and return the first result.
+    Search mfapi.in for a fund by name, preferring Direct Growth plans.
     Returns { "amfi_code": str, "matched_name": str } or None.
     """
     cleaned = clean_fund_name(fund_name)
@@ -36,6 +47,7 @@ def lookup_amfi_by_name(fund_name: str) -> dict | None:
         results = response.json()
         if not results:
             return None
+        results.sort(key=lambda r: -_score_scheme(r["schemeName"]))
         first = results[0]
         return {
             "amfi_code": str(first["schemeCode"]),

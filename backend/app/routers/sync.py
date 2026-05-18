@@ -45,4 +45,5 @@ async def sync_status(
 ):
     result = await db.execute(select(SignalConfig).where(SignalConfig.id == 1))
     config = result.scalar_one_or_none()
-    return SyncStatusOut(last_sync_at=config.last_sync_at if config else None)
+    ts = config.last_sync_at.replace(tzinfo=timezone.utc) if config and config.last_sync_at else None
+    return SyncStatusOut(last_sync_at=ts)
