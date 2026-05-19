@@ -1,7 +1,7 @@
-import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import engine, get_db
@@ -45,19 +45,18 @@ app.add_middleware(
 )
 
 
-@app.middleware("http")
-async def log_slow_requests(request: Request, call_next):
-    start = time.time()
-    try:
-        response = await call_next(request)
-    except Exception as e:
-        elapsed = time.time() - start
-        print(f"[req-error] {request.method} {request.url.path} failed after {elapsed:.2f}s: {e}")
-        raise
-    elapsed = time.time() - start
-    if elapsed > 1.0:
-        print(f"[req-slow] {request.method} {request.url.path} took {elapsed:.2f}s -> {response.status_code}")
-    return response
+# Catch-all exception handler that ensures CORS headers are present on 500 errors
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    import traceback
+    print(f"[unhandled-exception] {request.method} {request.url.path}: {exc}")
+    print(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}: {str(exc)}"},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
 
 app.include_router(funds.router)
 app.include_router(portfolio.router)
