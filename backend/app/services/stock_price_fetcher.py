@@ -1,46 +1,70 @@
+"""
+Fetches live stock prices directly from Yahoo Finance's REST API via httpx.
+Replaces yfinance which uses unstable internal endpoints prone to breaking.
+"""
+
 import asyncio
-import yfinance as yf
+import httpx
+
+YAHOO_API = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+YAHOO_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+}
 
 
-def _fetch_price_sync(symbol: str) -> tuple[float | None, str | None]:
-    """Returns (price, error). error is None on success, descriptive string on failure."""
-    ticker = yf.Ticker(symbol)
+async def _fetch_one(
+    client: httpx.AsyncClient,
+    symbol: str,
+    semaphore: asyncio.Semaphore,
+) -> tuple[float | None, str | None]:
+    async with semaphore:
+        try:
+            r = await client.get(
+                YAHOO_API.format(symbol=symbol),
+                params={"interval": "1d", "range": "5d"},
+                timeout=15.0,
+            )
+            if r.status_code != 200:
+                return None, f"HTTP {r.status_code}"
 
-    # Try fast_info first (fastest path when it works)
-    try:
-        price = ticker.fast_info.last_price
-        if price and price > 0:
-            return round(float(price), 4), None
-    except Exception:
-        pass
+            result = r.json().get("chart", {}).get("result", [])
+            if not result:
+                return None, "no chart data returned"
 
-    # Fallback: use 1d history (slower but more reliable)
-    try:
-        hist = ticker.history(period="1d")
-        if not hist.empty and "Close" in hist.columns:
-            close = float(hist["Close"].iloc[-1])
-            if close > 0:
-                return round(close, 4), None
-        return None, "empty history"
-    except Exception as e:
-        return None, f"{type(e).__name__}: {str(e)[:120]}"
+            price = result[0].get("meta", {}).get("regularMarketPrice")
+            if price and float(price) > 0:
+                return round(float(price), 4), None
 
+            return None, "price missing or zero in response"
 
-async def fetch_current_price(symbol: str) -> tuple[float | None, str | None]:
-    return await asyncio.to_thread(_fetch_price_sync, symbol)
+        except httpx.TimeoutException:
+            return None, "request timed out"
+        except Exception as e:
+            return None, f"{type(e).__name__}: {str(e)[:120]}"
 
 
 async def fetch_prices_batch(symbols: list[str]) -> dict[str, tuple[float | None, str | None]]:
-    """Fetch prices for symbols in parallel, capped at 5 concurrent to avoid Yahoo rate limiting."""
-    semaphore = asyncio.Semaphore(5)
+    """
+    Fetch current prices for all symbols in parallel using Yahoo Finance REST API.
+    Uses a shared httpx.AsyncClient (one TLS connection pool) and semaphore(10).
+    """
+    semaphore = asyncio.Semaphore(10)
 
-    async def bounded_fetch(s: str):
-        async with semaphore:
-            result = await fetch_current_price(s)
+    async with httpx.AsyncClient(
+        headers=YAHOO_HEADERS,
+        follow_redirects=True,
+    ) as client:
+        async def fetch_and_log(s: str):
+            result = await _fetch_one(client, s, semaphore)
             price, err = result
-            status = f"{price}" if price is not None else f"FAIL: {err or 'no data'}"
+            status = str(price) if price is not None else f"FAIL: {err or 'unknown'}"
             print(f"[stock-sync] {s} -> {status}")
-            return result
+            return s, result
 
-    results = await asyncio.gather(*[bounded_fetch(s) for s in symbols])
-    return dict(zip(symbols, results))
+        pairs = await asyncio.gather(*[fetch_and_log(s) for s in symbols])
+
+    return dict(pairs)
