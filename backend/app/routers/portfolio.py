@@ -1,30 +1,27 @@
-from datetime import date, datetime
+from collections import defaultdict
+from datetime import date, timedelta
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from scipy.optimize import brentq
+
 from app.database import get_db
 from app.models import Fund, NavHistory, Transaction
 from app.schemas import TransactionCreate, TransactionOut, PortfolioFundOut
 from app.auth import get_current_user
-from app.services.signal_engine import compute_signal
+from app.services.signal_engine import get_or_create_signal_config, compute_signal_from_rows
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 
-def compute_xirr(transactions: list[Transaction], current_value: float) -> Optional[float]:
+def compute_xirr(transactions: list, current_value: float) -> Optional[float]:
     if not transactions or current_value is None:
         return None
 
     today = date.today()
-    cash_flows = []
-
-    for txn in transactions:
-        txn_date = txn.transaction_date
-        amount = float(txn.units) * float(txn.buy_nav)
-        cash_flows.append((txn_date, -amount))
-
+    cash_flows = [(txn.transaction_date, -(float(txn.units) * float(txn.buy_nav))) for txn in transactions]
     cash_flows.append((today, current_value))
 
     if len(cash_flows) < 2:
@@ -33,16 +30,13 @@ def compute_xirr(transactions: list[Transaction], current_value: float) -> Optio
     first_date = cash_flows[0][0]
 
     def npv(rate: float) -> float:
-        total = 0.0
-        for cf_date, cf_amount in cash_flows:
-            days = (cf_date - first_date).days
-            years = days / 365.0
-            total += cf_amount / ((1 + rate) ** years)
-        return total
+        return sum(
+            cf / ((1 + rate) ** ((d - first_date).days / 365.0))
+            for d, cf in cash_flows
+        )
 
     try:
-        xirr = brentq(npv, -0.999, 100.0, maxiter=1000)
-        return round(xirr * 100, 2)
+        return round(brentq(npv, -0.999, 100.0, maxiter=1000) * 100, 2)
     except (ValueError, RuntimeError):
         return None
 
@@ -55,43 +49,56 @@ async def get_portfolio(
     funds_result = await db.execute(select(Fund).where(Fund.is_active == True))
     funds = funds_result.scalars().all()
 
+    if not funds:
+        return []
+
+    fund_ids = [f.id for f in funds]
+
+    # 1. All transactions in one query
+    all_txns = (await db.execute(
+        select(Transaction)
+        .where(Transaction.fund_id.in_(fund_ids))
+        .order_by(Transaction.fund_id, Transaction.transaction_date.asc())
+    )).scalars().all()
+
+    txns_by_fund: dict[int, list] = defaultdict(list)
+    for t in all_txns:
+        txns_by_fund[t.fund_id].append(t)
+
+    # 2. All nav history (covers latest nav AND signal computation) in one query
+    config = await get_or_create_signal_config(db)
+    cutoff = date.today() - timedelta(days=400)
+
+    all_nav = (await db.execute(
+        select(NavHistory)
+        .where(NavHistory.fund_id.in_(fund_ids), NavHistory.date >= cutoff)
+        .order_by(NavHistory.fund_id, NavHistory.date.desc())
+    )).scalars().all()
+
+    nav_by_fund: dict[int, list] = defaultdict(list)
+    for row in all_nav:
+        nav_by_fund[row.fund_id].append(row)
+
     output = []
     for fund in funds:
-        txn_result = await db.execute(
-            select(Transaction)
-            .where(Transaction.fund_id == fund.id)
-            .order_by(Transaction.transaction_date.asc())
-        )
-        transactions = txn_result.scalars().all()
-
-        if not transactions:
+        txns = txns_by_fund.get(fund.id, [])
+        if not txns:
             continue
 
-        total_units = sum(float(t.units) for t in transactions)
-        total_invested = sum(float(t.units) * float(t.buy_nav) for t in transactions)
-        avg_buy_nav = total_invested / total_units if total_units else 0.0
+        rows = nav_by_fund.get(fund.id, [])
+        current_nav = float(rows[0].nav_value) if rows else None
 
-        nav_result = await db.execute(
-            select(NavHistory)
-            .where(NavHistory.fund_id == fund.id)
-            .order_by(NavHistory.date.desc())
-            .limit(1)
+        total_units    = sum(float(t.units) for t in txns)
+        total_invested = sum(float(t.units) * float(t.buy_nav) for t in txns)
+        avg_buy_nav    = total_invested / total_units if total_units else 0.0
+        current_value  = round(total_units * current_nav, 2) if current_nav else None
+        gain_loss      = round(current_value - total_invested, 2) if current_value is not None else None
+        gain_loss_pct  = (
+            round(gain_loss / total_invested * 100, 2)
+            if gain_loss is not None and total_invested > 0 else None
         )
-        latest_nav_row = nav_result.scalar_one_or_none()
-        current_nav = float(latest_nav_row.nav_value) if latest_nav_row else None
-
-        current_value = total_units * current_nav if current_nav is not None else None
-        gain_loss = (
-            round(current_value - total_invested, 2) if current_value is not None else None
-        )
-        gain_loss_pct = (
-            ((current_value - total_invested) / total_invested) * 100
-            if current_value is not None and total_invested > 0
-            else None
-        )
-
-        xirr = compute_xirr(transactions, current_value) if current_value is not None else None
-        sig_data = await compute_signal(fund.id, db)
+        xirr = compute_xirr(txns, current_value) if current_value is not None else None
+        sig  = compute_signal_from_rows(rows, config)
 
         output.append(PortfolioFundOut(
             fund_id=fund.id,
@@ -101,12 +108,12 @@ async def get_portfolio(
             total_units=round(total_units, 4),
             avg_buy_nav=round(avg_buy_nav, 4),
             current_nav=current_nav,
-            current_value=round(current_value, 2) if current_value is not None else None,
+            current_value=current_value,
             invested_value=round(total_invested, 2),
             gain_loss=gain_loss,
-            gain_loss_pct=round(gain_loss_pct, 2) if gain_loss_pct is not None else None,
+            gain_loss_pct=gain_loss_pct,
             xirr=xirr,
-            signal=sig_data["signal"],
+            signal=sig["signal"],
         ))
 
     return output
@@ -166,4 +173,3 @@ async def delete_transaction(
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
     await db.delete(txn)
-    await db.flush()

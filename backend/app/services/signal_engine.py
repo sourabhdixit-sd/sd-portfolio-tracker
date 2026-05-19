@@ -57,22 +57,14 @@ _EMPTY_SIGNAL = {
 }
 
 
-async def compute_signal(fund_id: int, db: AsyncSession) -> dict:
-    config = await get_or_create_signal_config(db)
+def compute_signal_from_rows(rows: list, config: SignalConfig) -> dict:
+    """Pure computation — no DB calls. rows = NavHistory ordered date DESC."""
     buy_thr = float(config.buy_threshold_pct)
     sell_thr = float(config.sell_threshold_pct)
-    rsi_oversold = float(getattr(config, 'rsi_oversold', 30.0))
-    rsi_overbought = float(getattr(config, 'rsi_overbought', 70.0))
+    rsi_oversold  = float(getattr(config, 'rsi_oversold', 30.0))
+    rsi_overbought= float(getattr(config, 'rsi_overbought', 70.0))
     min_buy = int(getattr(config, 'min_buy_signals', 2))
-    min_sell = int(getattr(config, 'min_sell_signals', 2))
-
-    cutoff = date.today() - timedelta(days=400)
-    result = await db.execute(
-        select(NavHistory)
-        .where(NavHistory.fund_id == fund_id, NavHistory.date >= cutoff)
-        .order_by(NavHistory.date.desc())
-    )
-    rows = result.scalars().all()
+    min_sell= int(getattr(config, 'min_sell_signals', 2))
 
     if not rows:
         return dict(_EMPTY_SIGNAL)
@@ -91,28 +83,24 @@ async def compute_signal(fund_id: int, db: AsyncSession) -> dict:
 
     buy_votes = sell_votes = 0
 
-    # Window votes: 52W, 26W, 13W (same configured thresholds)
     for high, low in [(high_52w, low_52w), (high_26w, low_26w), (high_13w, low_13w)]:
         if high and current_nav <= high * (1 - buy_thr / 100):
             buy_votes += 1
         if low and current_nav >= low * (1 + sell_thr / 100):
             sell_votes += 1
 
-    # RSI vote
     if rsi_14 is not None:
         if rsi_14 <= rsi_oversold:
             buy_votes += 1
         elif rsi_14 >= rsi_overbought:
             sell_votes += 1
 
-    # SMA-200 vote
     if pct_from_sma_200 is not None:
         if pct_from_sma_200 < 0:
             buy_votes += 1
         else:
             sell_votes += 1
 
-    # Composite verdict
     if buy_votes >= min_buy and buy_votes > sell_votes:
         signal = "STRONG_BUY" if buy_votes >= 4 else "BUY"
     elif sell_votes >= min_sell and sell_votes > buy_votes:
@@ -133,3 +121,16 @@ async def compute_signal(fund_id: int, db: AsyncSession) -> dict:
         "pct_from_high_4w": pct_from_high_4w, "pct_from_low_4w": pct_from_low_4w,
         "sma_200": sma_200, "pct_from_sma_200": pct_from_sma_200, "rsi_14": rsi_14,
     }
+
+
+async def compute_signal(fund_id: int, db: AsyncSession) -> dict:
+    """Thin wrapper — fetches rows for one fund then delegates to pure function.
+    Used by portfolio.py and funds.py for individual fund signal computation."""
+    config = await get_or_create_signal_config(db)
+    cutoff = date.today() - timedelta(days=400)
+    result = await db.execute(
+        select(NavHistory)
+        .where(NavHistory.fund_id == fund_id, NavHistory.date >= cutoff)
+        .order_by(NavHistory.date.desc())
+    )
+    return compute_signal_from_rows(result.scalars().all(), config)

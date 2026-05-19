@@ -1,5 +1,6 @@
 import asyncio
-from datetime import date as date_type
+from collections import defaultdict
+from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status
 from sqlalchemy import select, delete as sql_delete
@@ -10,7 +11,7 @@ from app.schemas import FundCreate, FundOut, ImportConfirmPayload, UnifiedImport
 from app.services.portfolio_parser import parse_stocks_from_pdf, parse_stocks_from_excel
 from app.models import Stock, StockTransaction
 from app.auth import get_current_user
-from app.services.signal_engine import compute_signal
+from app.services.signal_engine import compute_signal, get_or_create_signal_config, compute_signal_from_rows
 from app.services.portfolio_parser import parse_pdf, parse_excel
 from app.services.isin_lookup import lookup_all_funds, lookup_amfi_by_name
 from app.services.nav_fetcher import fetch_and_store_nav
@@ -65,21 +66,32 @@ async def list_funds(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    result = await db.execute(select(Fund).where(Fund.is_active == True))
-    funds = result.scalars().all()
+    funds_result = await db.execute(select(Fund).where(Fund.is_active == True))
+    funds = funds_result.scalars().all()
+
+    if not funds:
+        return []
+
+    fund_ids = [f.id for f in funds]
+    config = await get_or_create_signal_config(db)
+    cutoff = date_type.today() - timedelta(days=400)
+
+    # ONE batched query: covers both latest_nav (first row per fund) and signal computation
+    all_nav = (await db.execute(
+        select(NavHistory)
+        .where(NavHistory.fund_id.in_(fund_ids), NavHistory.date >= cutoff)
+        .order_by(NavHistory.fund_id, NavHistory.date.desc())
+    )).scalars().all()
+
+    nav_by_fund: dict[int, list] = defaultdict(list)
+    for row in all_nav:
+        nav_by_fund[row.fund_id].append(row)
 
     output = []
     for fund in funds:
-        latest_result = await db.execute(
-            select(NavHistory)
-            .where(NavHistory.fund_id == fund.id)
-            .order_by(NavHistory.date.desc())
-            .limit(1)
-        )
-        latest_nav_row = latest_result.scalar_one_or_none()
-
-        sig_data = await compute_signal(fund.id, db)
-
+        rows = nav_by_fund.get(fund.id, [])
+        latest_row = rows[0] if rows else None
+        sig = compute_signal_from_rows(rows, config)
         output.append(FundOut(
             id=fund.id,
             name=fund.name,
@@ -87,9 +99,9 @@ async def list_funds(
             sector=fund.sector,
             is_active=fund.is_active,
             created_at=fund.created_at,
-            latest_nav=float(latest_nav_row.nav_value) if latest_nav_row else None,
-            latest_nav_date=latest_nav_row.date if latest_nav_row else None,
-            signal=sig_data["signal"],
+            latest_nav=float(latest_row.nav_value) if latest_row else None,
+            latest_nav_date=latest_row.date if latest_row else None,
+            signal=sig["signal"],
         ))
 
     return output
