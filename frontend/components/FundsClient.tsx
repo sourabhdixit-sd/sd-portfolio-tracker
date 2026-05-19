@@ -1,25 +1,24 @@
 "use client";
 
-import { useState, Fragment } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
-import { deleteFund, getNavHistory } from "@/lib/api";
+import { deleteFund, getNavHistory, getSignals } from "@/lib/api";
 import type { Fund, FundWithSignal, NavPoint } from "@/lib/api";
 import SignalBadge from "@/components/SignalBadge";
 import NavChart from "@/components/NavChart";
 import AddFundForm from "@/components/AddFundForm";
 import ImportFundsModal from "@/components/ImportFundsModal";
 
-interface FundsClientProps {
-  funds: FundWithSignal[];
-}
-
 function formatINR(value: number | null | undefined): string {
   if (value == null) return "—";
   return `₹${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export default function FundsClient({ funds }: FundsClientProps) {
+export default function FundsClient() {
   const router = useRouter();
+  const [funds, setFunds] = useState<FundWithSignal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string>("");
   const [showAddForm, setShowAddForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [expandedFundId, setExpandedFundId] = useState<number | null>(null);
@@ -27,6 +26,21 @@ export default function FundsClient({ funds }: FundsClientProps) {
   const [navLoading, setNavLoading] = useState<Record<number, boolean>>({});
   const [navError, setNavError] = useState<Record<number, string>>({});
   const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const loadFunds = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const data = await getSignals();
+      setFunds(data);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Failed to load funds");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadFunds(); }, [loadFunds]);
 
   async function handleViewChart(fund: Fund) {
     if (expandedFundId === fund.id) {
@@ -56,7 +70,7 @@ export default function FundsClient({ funds }: FundsClientProps) {
     setDeletingId(id);
     try {
       await deleteFund(id);
-      router.refresh();
+      await loadFunds();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to delete fund.");
     } finally {
@@ -123,9 +137,22 @@ export default function FundsClient({ funds }: FundsClientProps) {
             All Funds ({funds.length})
           </p>
         </div>
-        {funds.length === 0 ? (
+        {loading ? (
+          <div className="px-5 py-10 flex items-center justify-center gap-2 text-slate-500 text-sm">
+            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            Loading funds…
+          </div>
+        ) : loadError ? (
+          <div className="px-5 py-10 text-center text-red-400 text-sm">
+            <p className="mb-2">Failed to load funds: {loadError}</p>
+            <button onClick={loadFunds} className="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded">Retry</button>
+          </div>
+        ) : funds.length === 0 ? (
           <div className="px-5 py-10 text-center text-slate-500 text-sm">
-            No funds added yet. Click "Add Fund" to get started.
+            No funds added yet. Click "Add Fund" or "Import PDF/Excel" to get started.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -255,7 +282,7 @@ export default function FundsClient({ funds }: FundsClientProps) {
           onClose={() => setShowImport(false)}
           onSuccess={() => {
             setShowImport(false);
-            router.refresh();
+            loadFunds();
           }}
         />
       )}

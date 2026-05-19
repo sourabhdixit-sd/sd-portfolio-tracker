@@ -1,15 +1,10 @@
 "use client";
 
-import { useState, Fragment } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
-import { getTransactions, deleteTransaction } from "@/lib/api";
+import { getTransactions, deleteTransaction, getPortfolio, getFunds } from "@/lib/api";
 import type { Fund, PortfolioEntry, Transaction } from "@/lib/api";
 import AddTransactionForm from "@/components/AddTransactionForm";
-
-interface PortfolioClientProps {
-  portfolio: PortfolioEntry[];
-  funds: Fund[];
-}
 
 function formatINR(value: number | null | undefined): string {
   if (value == null) return "—";
@@ -40,11 +35,12 @@ function getGainLossClass(value: number | null | undefined): string {
   return "text-green-400";
 }
 
-export default function PortfolioClient({
-  portfolio,
-  funds,
-}: PortfolioClientProps) {
+export default function PortfolioClient() {
   const router = useRouter();
+  const [portfolio, setPortfolio] = useState<PortfolioEntry[]>([]);
+  const [funds, setFunds] = useState<Fund[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string>("");
   const [showAddForm, setShowAddForm] = useState(false);
   const [expandedFundId, setExpandedFundId] = useState<number | null>(null);
   const [transactions, setTransactions] = useState<
@@ -53,6 +49,23 @@ export default function PortfolioClient({
   const [txLoading, setTxLoading] = useState<Record<number, boolean>>({});
   const [txError, setTxError] = useState<Record<number, string>>({});
   const [deletingTxId, setDeletingTxId] = useState<number | null>(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const [pRes, fRes] = await Promise.allSettled([getPortfolio(), getFunds()]);
+      if (pRes.status === "fulfilled") setPortfolio(pRes.value);
+      if (fRes.status === "fulfilled") setFunds(fRes.value);
+      if (pRes.status === "rejected" && fRes.status === "rejected") {
+        setLoadError(pRes.reason instanceof Error ? pRes.reason.message : "Failed to load portfolio");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   // Summary calculations
   const totalInvested = portfolio.reduce(
@@ -101,7 +114,7 @@ export default function PortfolioClient({
         ...prev,
         [fundId]: (prev[fundId] ?? []).filter((t) => t.id !== txId),
       }));
-      router.refresh();
+      await loadData();
     } catch (err) {
       alert(
         err instanceof Error ? err.message : "Failed to delete transaction."
@@ -203,7 +216,20 @@ export default function PortfolioClient({
             Holdings ({portfolio.length})
           </p>
         </div>
-        {portfolio.length === 0 ? (
+        {loading ? (
+          <div className="px-5 py-10 flex items-center justify-center gap-2 text-slate-500 text-sm">
+            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            Loading portfolio…
+          </div>
+        ) : loadError ? (
+          <div className="px-5 py-10 text-center text-red-400 text-sm">
+            <p className="mb-2">Failed to load portfolio: {loadError}</p>
+            <button onClick={loadData} className="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded">Retry</button>
+          </div>
+        ) : portfolio.length === 0 ? (
           <div className="px-5 py-10 text-center text-slate-500 text-sm">
             No portfolio data. Add transactions to track your holdings.
           </div>
