@@ -61,10 +61,10 @@ async def compute_signal(fund_id: int, db: AsyncSession) -> dict:
     config = await get_or_create_signal_config(db)
     buy_thr = float(config.buy_threshold_pct)
     sell_thr = float(config.sell_threshold_pct)
-    rsi_oversold = float(config.rsi_oversold)
-    rsi_overbought = float(config.rsi_overbought)
-    min_buy = int(config.min_buy_signals)
-    min_sell = int(config.min_sell_signals)
+    rsi_oversold = float(getattr(config, 'rsi_oversold', 30.0))
+    rsi_overbought = float(getattr(config, 'rsi_overbought', 70.0))
+    min_buy = int(getattr(config, 'min_buy_signals', 2))
+    min_sell = int(getattr(config, 'min_sell_signals', 2))
 
     cutoff = date.today() - timedelta(days=400)
     result = await db.execute(

@@ -54,7 +54,11 @@ def _build_portfolio_out(stock: Stock, txns: list[StockTransaction]) -> StockPor
     total_shares = sum(float(t.shares) for t in txns)
     total_invested = sum(float(t.shares) * float(t.buy_price) for t in txns)
     avg_buy_price = round(total_invested / total_shares, 4) if total_shares else 0.0
-    current_price = float(stock.current_price) if stock.current_price is not None else None
+    # Use getattr for new columns — graceful fallback if DB migration hasn't run yet
+    raw_price = getattr(stock, 'current_price', None)
+    current_price = float(raw_price) if raw_price is not None else None
+    price_updated_at = getattr(stock, 'price_updated_at', None)
+    show_on_dashboard = getattr(stock, 'show_on_dashboard', False)
     current_value = round(total_shares * current_price, 2) if current_price else None
     gain_loss = round(current_value - total_invested, 2) if current_value is not None else None
     gain_loss_pct = (
@@ -72,13 +76,13 @@ def _build_portfolio_out(stock: Stock, txns: list[StockTransaction]) -> StockPor
         total_shares=round(total_shares, 4),
         avg_buy_price=avg_buy_price,
         current_price=current_price,
-        price_updated_at=stock.price_updated_at,
+        price_updated_at=price_updated_at,
         current_value=current_value,
         invested_value=round(total_invested, 2),
         gain_loss=gain_loss,
         gain_loss_pct=gain_loss_pct,
         xirr=xirr,
-        show_on_dashboard=stock.show_on_dashboard,
+        show_on_dashboard=show_on_dashboard,
     )
 
 

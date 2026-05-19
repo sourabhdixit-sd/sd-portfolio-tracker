@@ -18,6 +18,34 @@ from app.services.nav_fetcher import fetch_and_store_nav
 router = APIRouter(prefix="/funds", tags=["funds"])
 
 
+async def _lookup_all_parallel(fund_groups: dict) -> list:
+    """Parallel AMFI lookup — replaces the sequential lookup_all_funds to avoid 20-30s timeouts."""
+    semaphore = asyncio.Semaphore(5)
+
+    async def lookup_one(isin: str, group: dict) -> dict:
+        fund_name = group["fund_name"]
+        transactions = group["transactions"]
+        total_units = sum(t["units"] for t in transactions)
+        total_invested = sum(t["investment_amount"] for t in transactions)
+
+        async with semaphore:
+            result = await asyncio.to_thread(lookup_amfi_by_name, fund_name)
+
+        return {
+            "fund_name": fund_name,
+            "isin": isin,
+            "amfi_code": result["amfi_code"] if result else None,
+            "matched_name": result["matched_name"] if result else None,
+            "needs_manual_amfi": result is None,
+            "transactions": transactions,
+            "total_units": total_units,
+            "total_invested": total_invested,
+        }
+
+    return list(await asyncio.gather(*[lookup_one(isin, g) for isin, g in fund_groups.items()]))
+
+
+
 async def _fetch_navs_background(fund_data: list[tuple[int, str]]):
     """Fetch NAV history for newly imported funds in the background."""
     async with AsyncSessionLocal() as db:
@@ -128,7 +156,7 @@ async def parse_import_file(
             detail="Unsupported file type. Please upload a .pdf or .xlsx file.",
         )
 
-    funds_list = lookup_all_funds(parsed["funds"])
+    funds_list = await _lookup_all_parallel(parsed["funds"])
     return {"report_date": parsed["report_date"], "funds": funds_list}
 
 
@@ -257,7 +285,7 @@ async def unified_parse(
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type. Upload a .pdf or .xlsx file.")
 
-    funds_list = lookup_all_funds(mf_parsed["funds"])
+    funds_list = await _lookup_all_parallel(mf_parsed["funds"])
 
     def _suggest_symbol(name: str) -> str:
         cleaned = name.upper().split()[0] if name else ""
