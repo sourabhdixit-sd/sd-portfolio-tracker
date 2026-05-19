@@ -57,8 +57,9 @@ export default function PortfolioClient() {
       const [pRes, fRes] = await Promise.allSettled([getPortfolio(), getFunds()]);
       if (pRes.status === "fulfilled") setPortfolio(pRes.value);
       if (fRes.status === "fulfilled") setFunds(fRes.value);
-      if (pRes.status === "rejected" && fRes.status === "rejected") {
-        setLoadError(pRes.reason instanceof Error ? pRes.reason.message : "Failed to load portfolio");
+      if (pRes.status === "rejected") {
+        console.error("[Portfolio] Load failed:", pRes.reason);
+        setLoadError(pRes.reason instanceof Error ? pRes.reason.message : String(pRes.reason));
       }
     } finally {
       setLoading(false);
@@ -226,7 +227,10 @@ export default function PortfolioClient() {
           </div>
         ) : loadError ? (
           <div className="px-5 py-10 text-center text-red-400 text-sm">
-            <p className="mb-2">Failed to load portfolio: {loadError}</p>
+            <p className="mb-2">Error: {loadError}</p>
+            <p className="text-xs text-slate-500 mb-3">
+              Try a hard refresh (Cmd+Shift+R / Ctrl+Shift+R) to clear cache.
+            </p>
             <button onClick={loadData} className="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded">Retry</button>
           </div>
         ) : portfolio.length === 0 ? (

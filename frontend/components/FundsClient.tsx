@@ -34,7 +34,9 @@ export default function FundsClient() {
       const data = await getSignals();
       setFunds(data);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to load funds");
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[Funds] Load failed:", err);
+      setLoadError(msg);
     } finally {
       setLoading(false);
     }
@@ -147,7 +149,10 @@ export default function FundsClient() {
           </div>
         ) : loadError ? (
           <div className="px-5 py-10 text-center text-red-400 text-sm">
-            <p className="mb-2">Failed to load funds: {loadError}</p>
+            <p className="mb-2">Error: {loadError}</p>
+            <p className="text-xs text-slate-500 mb-3">
+              Try a hard refresh (Cmd+Shift+R / Ctrl+Shift+R) to clear cache.
+            </p>
             <button onClick={loadFunds} className="text-xs px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded">Retry</button>
           </div>
         ) : funds.length === 0 ? (

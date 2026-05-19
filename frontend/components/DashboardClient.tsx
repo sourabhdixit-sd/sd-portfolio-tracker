@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { getSignals, getSignalConfig, getSyncStatus, getPortfolio, getStockWatchlist } from "@/lib/api";
+import { useState, useEffect, useCallback } from "react";
+import { getSignals, getSignalConfig, getSyncStatus, getPortfolio, getStockWatchlist, toggleStockWatchlist } from "@/lib/api";
 import type { FundWithSignal, Signal, SignalConfig, StockPortfolioEntry } from "@/lib/api";
 import SignalBadge from "@/components/SignalBadge";
 import SyncButton from "@/components/SyncButton";
@@ -61,25 +61,46 @@ export default function DashboardClient() {
   const [watchlist, setWatchlist] = useState<StockPortfolioEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
+  const [togglingStarId, setTogglingStarId] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    const [signalsRes, configRes, syncRes, portfolioRes, watchlistRes] = await Promise.allSettled([
+      getSignals(), getSignalConfig(), getSyncStatus(), getPortfolio(), getStockWatchlist(),
+    ]);
+    if (signalsRes.status === "fulfilled") setSignals(signalsRes.value);
+    if (configRes.status === "fulfilled") setConfig(configRes.value);
+    if (syncRes.status === "fulfilled") setLastSync(syncRes.value.last_sync_at);
+    if (portfolioRes.status === "fulfilled") {
+      const p = portfolioRes.value;
+      setPortfolioTotal(p.reduce((s, e) => s + (e.current_value ?? 0), 0));
+      setGainersCount(p.filter(e => e.gain_loss != null && e.gain_loss > 0).length);
+    }
+    if (watchlistRes.status === "fulfilled") setWatchlist(watchlistRes.value);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
-    async function load() {
-      const [signalsRes, configRes, syncRes, portfolioRes, watchlistRes] = await Promise.allSettled([
-        getSignals(), getSignalConfig(), getSyncStatus(), getPortfolio(), getStockWatchlist(),
-      ]);
-      if (signalsRes.status === "fulfilled") setSignals(signalsRes.value);
-      if (configRes.status === "fulfilled") setConfig(configRes.value);
-      if (syncRes.status === "fulfilled") setLastSync(syncRes.value.last_sync_at);
-      if (portfolioRes.status === "fulfilled") {
-        const p = portfolioRes.value;
-        setPortfolioTotal(p.reduce((s, e) => s + (e.current_value ?? 0), 0));
-        setGainersCount(p.filter(e => e.gain_loss != null && e.gain_loss > 0).length);
-      }
-      if (watchlistRes.status === "fulfilled") setWatchlist(watchlistRes.value);
-      setLoading(false);
-    }
     load();
-  }, []);
+    // Auto-refresh when user returns to this tab (e.g. after starring on Stocks page)
+    const handleFocus = () => load();
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [load]);
+
+  async function handleUnstar(stockId: number) {
+    setTogglingStarId(stockId);
+    // Optimistic update — remove immediately
+    setWatchlist(prev => prev.filter(s => s.stock_id !== stockId));
+    try {
+      await toggleStockWatchlist(stockId);
+    } catch (err) {
+      console.error("[Dashboard] Unstar failed:", err);
+      // Reload to restore correct state on error
+      load();
+    } finally {
+      setTogglingStarId(null);
+    }
+  }
 
   const buySignals = signals.filter(s => s.signal === "BUY" || s.signal === "STRONG_BUY");
   const sellSignals = signals.filter(s => s.signal === "SELL" || s.signal === "STRONG_SELL");
@@ -144,6 +165,7 @@ export default function DashboardClient() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-700 bg-slate-800/50">
+                    <th className="w-8 px-3" title="Remove from dashboard" />
                     <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">Stock</th>
                     <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">Symbol</th>
                     <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">Price</th>
@@ -155,6 +177,16 @@ export default function DashboardClient() {
                 <tbody className="divide-y divide-slate-700">
                   {watchlist.map(s => (
                     <tr key={s.stock_id} className="hover:bg-slate-700/30">
+                      <td className="px-3 py-3 text-center">
+                        <button
+                          onClick={() => handleUnstar(s.stock_id)}
+                          disabled={togglingStarId === s.stock_id}
+                          title="Remove from dashboard"
+                          className="text-lg leading-none text-yellow-400 hover:text-slate-500 disabled:opacity-40 transition-colors"
+                        >
+                          ★
+                        </button>
+                      </td>
                       <td className="px-4 py-3 font-medium text-slate-200 max-w-[160px]">
                         <span className="truncate block" title={s.stock_name}>{s.stock_name}</span>
                       </td>
