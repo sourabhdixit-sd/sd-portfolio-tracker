@@ -7,6 +7,9 @@ export interface Fund {
   sector: string | null;
   is_active: boolean;
   created_at: string;
+  latest_nav?: number | null;
+  latest_nav_date?: string | null;
+  signal?: Signal;
 }
 
 export interface FundWithSignal extends Fund {
@@ -92,11 +95,33 @@ async function apiFetch<T>(
     ...(options.headers ?? {}),
   };
 
-  const res = await fetch(url, {
-    ...options,
-    headers,
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const startTime = Date.now();
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const elapsed = Date.now() - startTime;
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Request to ${path} timed out after ${elapsed}ms — backend may be slow or unreachable`);
+    }
+    console.error(`[apiFetch] ${path} network error after ${elapsed}ms:`, err);
+    throw new Error(`Network error calling ${path}: ${err instanceof Error ? err.message : String(err)} (after ${elapsed}ms)`);
+  }
+
+  clearTimeout(timeoutId);
+  const elapsed = Date.now() - startTime;
+  if (typeof console !== "undefined") {
+    console.log(`[apiFetch] ${path} → ${res.status} in ${elapsed}ms`);
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);

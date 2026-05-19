@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
-import { deleteFund, getNavHistory, getSignals } from "@/lib/api";
-import type { Fund, FundWithSignal, NavPoint } from "@/lib/api";
+import { deleteFund, getNavHistory, getFunds } from "@/lib/api";
+import type { Fund, NavPoint, Signal } from "@/lib/api";
 import SignalBadge from "@/components/SignalBadge";
 import NavChart from "@/components/NavChart";
 import AddFundForm from "@/components/AddFundForm";
@@ -16,7 +16,7 @@ function formatINR(value: number | null | undefined): string {
 
 export default function FundsClient() {
   const router = useRouter();
-  const [funds, setFunds] = useState<FundWithSignal[]>([]);
+  const [funds, setFunds] = useState<Fund[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>("");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -31,7 +31,7 @@ export default function FundsClient() {
     setLoading(true);
     setLoadError("");
     try {
-      const data = await getSignals();
+      const data = await getFunds();
       setFunds(data);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -204,10 +204,10 @@ export default function FundsClient() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-200">
-                        {formatINR(fund.current_nav)}
+                        {formatINR(fund.latest_nav)}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <SignalBadge signal={fund.signal} />
+                        <SignalBadge signal={(fund.signal ?? "HOLD") as Signal} />
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">

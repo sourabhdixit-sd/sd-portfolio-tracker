@@ -1,5 +1,6 @@
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +43,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_slow_requests(request: Request, call_next):
+    start = time.time()
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        elapsed = time.time() - start
+        print(f"[req-error] {request.method} {request.url.path} failed after {elapsed:.2f}s: {e}")
+        raise
+    elapsed = time.time() - start
+    if elapsed > 1.0:
+        print(f"[req-slow] {request.method} {request.url.path} took {elapsed:.2f}s -> {response.status_code}")
+    return response
 
 app.include_router(funds.router)
 app.include_router(portfolio.router)
