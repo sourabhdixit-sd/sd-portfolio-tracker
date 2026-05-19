@@ -21,7 +21,8 @@ from app.auth import get_current_user
 from app.services.portfolio_parser import parse_stocks_from_pdf, parse_stocks_from_excel
 from app.services.stock_price_fetcher import fetch_prices_batch
 
-_YAHOO_SEARCH = "https://query2.finance.yahoo.com/v1/finance/search"
+# query1 confirmed working from Railway; query2 is blocked/rate-limited from Railway's IP
+_YAHOO_SEARCH = "https://query1.finance.yahoo.com/v1/finance/search"
 _YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     "Accept": "application/json",
@@ -32,6 +33,23 @@ _CLEAN_SUFFIXES = re.compile(
     flags=re.IGNORECASE,
 )
 
+# Known hard cases where name search returns wrong ticker — verified locally
+_SYMBOL_OVERRIDES: dict[str, str] = {
+    "axis bank": "AXISBANK.NS",
+    "tata motors": "TATAMOTORS.NS",
+    "tata steel": "TATASTEEL.NS",
+    "tata power": "TATAPOWER.NS",
+    "tata chemicals": "TATACHEM.NS",
+    "tata consumer": "TATACONSUM.NS",
+    "tata communications": "TATACOMM.NS",
+    "hero motocorp": "HEROMOTOCO.NS",
+    "hero moto corp": "HEROMOTOCO.NS",
+    "mahindra & mahindra": "M&M.NS",
+    "m&m": "M&M.NS",
+    "sun pharma": "SUNPHARMA.NS",
+    "sun pharmaceutical": "SUNPHARMA.NS",
+}
+
 
 def _clean_name(name: str) -> str:
     return _CLEAN_SUFFIXES.sub("", name.strip()).strip()
@@ -39,22 +57,44 @@ def _clean_name(name: str) -> str:
 
 async def _lookup_nse_symbol(client: httpx.AsyncClient, name: str) -> str | None:
     cleaned = _clean_name(name)
-    try:
-        r = await client.get(
-            _YAHOO_SEARCH,
-            params={"q": cleaned, "quotesCount": 6, "newsCount": 0, "country": "India"},
-            timeout=10.0,
-        )
-        if r.status_code != 200:
-            return None
-        quotes = r.json().get("quotes", [])
-        # Prefer NSE (.NS) equity over BSE (.BO)
-        equity_ns = [q for q in quotes if q.get("symbol", "").endswith(".NS") and q.get("quoteType") == "EQUITY"]
-        equity_bo = [q for q in quotes if q.get("symbol", "").endswith(".BO") and q.get("quoteType") == "EQUITY"]
-        best = equity_ns or equity_bo
-        return best[0]["symbol"] if best else None
-    except Exception:
-        return None
+    name_lower = name.lower()
+
+    # Override dict handles known hard cases
+    for fragment, ticker in _SYMBOL_OVERRIDES.items():
+        if fragment in name_lower:
+            return ticker
+
+    # Search with country=India first, then without (broader)
+    for country in ["India", None]:
+        params: dict = {"q": cleaned, "quotesCount": 6, "newsCount": 0}
+        if country:
+            params["country"] = country
+        try:
+            r = await client.get(_YAHOO_SEARCH, params=params, timeout=10.0)
+            if r.status_code != 200:
+                continue
+            quotes = r.json().get("quotes", [])
+            # Prefer NSE (.NS) equity
+            ns = [q for q in quotes if q.get("symbol", "").endswith(".NS") and q.get("quoteType") == "EQUITY"]
+            if ns:
+                return ns[0]["symbol"]
+            # Fallback: bare US-listed ticker (e.g. INFY) → try INFY.NS
+            bare = [q["symbol"] for q in quotes if "." not in q.get("symbol", "") and q.get("quoteType") == "EQUITY"]
+            for b in bare[:2]:
+                r2 = await client.get(
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{b}.NS",
+                    params={"interval": "1d", "range": "1d"},
+                    timeout=8.0,
+                )
+                if r2.status_code == 200:
+                    result = r2.json().get("chart", {}).get("result", [])
+                    if result and result[0].get("meta", {}).get("regularMarketPrice", 0) > 0:
+                        return f"{b}.NS"
+        except Exception:
+            continue
+        await asyncio.sleep(0.1)
+
+    return None
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
