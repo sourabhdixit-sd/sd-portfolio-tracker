@@ -1,6 +1,5 @@
 """
 Fetches live stock prices directly from Yahoo Finance's REST API via httpx.
-Replaces yfinance which uses unstable internal endpoints prone to breaking.
 """
 
 import asyncio
@@ -13,7 +12,10 @@ YAHOO_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
     "Accept": "application/json",
+    "Referer": "https://finance.yahoo.com",
 }
+
+_DELAY_BETWEEN_REQUESTS = 0.2  # seconds between each fetch to avoid 429
 
 
 async def _fetch_one(
@@ -22,24 +24,33 @@ async def _fetch_one(
     semaphore: asyncio.Semaphore,
 ) -> tuple[float | None, str | None]:
     async with semaphore:
+        await asyncio.sleep(_DELAY_BETWEEN_REQUESTS)
         try:
             r = await client.get(
                 YAHOO_API.format(symbol=symbol),
                 params={"interval": "1d", "range": "5d"},
                 timeout=15.0,
             )
+            if r.status_code == 429:
+                # Rate limited — retry once after a longer pause
+                await asyncio.sleep(2.0)
+                r = await client.get(
+                    YAHOO_API.format(symbol=symbol),
+                    params={"interval": "1d", "range": "5d"},
+                    timeout=15.0,
+                )
             if r.status_code != 200:
                 return None, f"HTTP {r.status_code}"
 
             result = r.json().get("chart", {}).get("result", [])
             if not result:
-                return None, "no chart data returned"
+                return None, "no chart data (symbol may be invalid)"
 
             price = result[0].get("meta", {}).get("regularMarketPrice")
             if price and float(price) > 0:
                 return round(float(price), 4), None
 
-            return None, "price missing or zero in response"
+            return None, "price missing or zero"
 
         except httpx.TimeoutException:
             return None, "request timed out"
@@ -49,10 +60,16 @@ async def _fetch_one(
 
 async def fetch_prices_batch(symbols: list[str]) -> dict[str, tuple[float | None, str | None]]:
     """
-    Fetch current prices for all symbols in parallel using Yahoo Finance REST API.
-    Uses a shared httpx.AsyncClient (one TLS connection pool) and semaphore(10).
+    Fetch prices for the given symbols.
+    Deduplicates symbols first so identical tickers are only fetched once.
+    Uses semaphore(3) + 200ms delay to stay under Yahoo's rate limit.
     """
-    semaphore = asyncio.Semaphore(10)
+    unique_symbols = list(dict.fromkeys(symbols))  # deduplicate, preserve order
+    skipped = len(symbols) - len(unique_symbols)
+    if skipped:
+        print(f"[stock-sync] deduplicated {len(symbols)} → {len(unique_symbols)} unique symbols")
+
+    semaphore = asyncio.Semaphore(3)
 
     async with httpx.AsyncClient(
         headers=YAHOO_HEADERS,
@@ -65,6 +82,6 @@ async def fetch_prices_batch(symbols: list[str]) -> dict[str, tuple[float | None
             print(f"[stock-sync] {s} -> {status}")
             return s, result
 
-        pairs = await asyncio.gather(*[fetch_and_log(s) for s in symbols])
+        pairs = await asyncio.gather(*[fetch_and_log(s) for s in unique_symbols])
 
     return dict(pairs)

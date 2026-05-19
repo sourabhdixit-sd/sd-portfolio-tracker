@@ -247,6 +247,28 @@ async def sync_stock_prices(
     return {"synced": synced, "failed": failed, "failures": failures[:10]}
 
 
+@router.patch("/{stock_id}/symbol")
+async def update_stock_symbol(
+    stock_id: int,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(select(Stock).where(Stock.id == stock_id))
+    stock = result.scalar_one_or_none()
+    if not stock:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    new_symbol = str(payload.get("symbol", "")).strip().upper()
+    if not new_symbol:
+        raise HTTPException(status_code=400, detail="symbol is required")
+    stock.symbol = new_symbol
+    # Clear price so it's re-fetched with correct symbol
+    stock.current_price = None
+    stock.price_updated_at = None
+    await db.flush()
+    return {"stock_id": stock_id, "symbol": stock.symbol}
+
+
 @router.patch("/{stock_id}/watchlist")
 async def toggle_watchlist(
     stock_id: int,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, Fragment } from "react";
-import { getStockPortfolio, getStockTransactions, deleteStockTransaction, syncStockPrices, toggleStockWatchlist } from "@/lib/api";
+import { getStockPortfolio, getStockTransactions, deleteStockTransaction, syncStockPrices, toggleStockWatchlist, updateStockSymbol } from "@/lib/api";
 import type { StockPortfolioEntry, StockTransaction } from "@/lib/api";
 import ImportStocksModal from "@/components/ImportStocksModal";
 
@@ -41,6 +41,8 @@ export default function StocksClient() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string>("");
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [editingSymbolId, setEditingSymbolId] = useState<number | null>(null);
+  const [editingSymbolValue, setEditingSymbolValue] = useState<string>("");
 
   async function loadPortfolio() {
     try {
@@ -117,6 +119,26 @@ export default function StocksClient() {
     } finally {
       setSyncing(false);
       setTimeout(() => setSyncResult(""), 10000);
+    }
+  }
+
+  function startEditSymbol(stockId: number, currentSymbol: string) {
+    setEditingSymbolId(stockId);
+    setEditingSymbolValue(currentSymbol);
+  }
+
+  async function saveSymbol(stockId: number) {
+    const sym = editingSymbolValue.trim().toUpperCase();
+    if (!sym) { setEditingSymbolId(null); return; }
+    try {
+      const res = await updateStockSymbol(stockId, sym);
+      setPortfolio(prev => prev.map(s =>
+        s.stock_id === stockId ? { ...s, symbol: res.symbol, current_price: null, price_updated_at: null } : s
+      ));
+    } catch (err) {
+      console.error("[Stocks] Symbol update failed:", err);
+    } finally {
+      setEditingSymbolId(null);
     }
   }
 
@@ -240,7 +262,29 @@ export default function StocksClient() {
                       <td className="px-4 py-3 font-medium text-slate-200 max-w-[160px] cursor-pointer" onClick={() => handleExpand(entry.stock_id)}>
                         <span className="truncate block" title={entry.stock_name}>{entry.stock_name}</span>
                       </td>
-                      <td className="px-4 py-3 text-slate-400 font-mono text-xs cursor-pointer" onClick={() => handleExpand(entry.stock_id)}>{entry.symbol}</td>
+                      <td className="px-4 py-3 text-slate-400 font-mono text-xs" onClick={e => e.stopPropagation()}>
+                        {editingSymbolId === entry.stock_id ? (
+                          <input
+                            autoFocus
+                            value={editingSymbolValue}
+                            onChange={e => setEditingSymbolValue(e.target.value.toUpperCase())}
+                            onBlur={() => saveSymbol(entry.stock_id)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") saveSymbol(entry.stock_id);
+                              if (e.key === "Escape") setEditingSymbolId(null);
+                            }}
+                            className="w-28 bg-slate-700 border border-blue-500 rounded px-1.5 py-0.5 text-xs text-slate-100 font-mono focus:outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => startEditSymbol(entry.stock_id, entry.symbol)}
+                            title="Click to edit ticker symbol"
+                            className="hover:text-blue-400 hover:underline transition-colors"
+                          >
+                            {entry.symbol}
+                          </button>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right text-slate-300 cursor-pointer" onClick={() => handleExpand(entry.stock_id)}>
                         {entry.total_shares.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>

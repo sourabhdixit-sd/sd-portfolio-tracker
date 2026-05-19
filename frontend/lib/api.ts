@@ -421,6 +421,16 @@ export interface StockSyncResult {
   failures?: Array<{ symbol: string; name: string; error: string }>;
 }
 
+export async function updateStockSymbol(
+  stockId: number,
+  symbol: string
+): Promise<{ stock_id: number; symbol: string }> {
+  return apiFetch(`/stocks/${stockId}/symbol`, {
+    method: "PATCH",
+    body: JSON.stringify({ symbol }),
+  });
+}
+
 export async function syncStockPrices(): Promise<StockSyncResult> {
   return apiFetch<StockSyncResult>("/stocks/sync", { method: "POST" });
 }
