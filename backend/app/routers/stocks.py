@@ -57,7 +57,9 @@ def _build_portfolio_out(stock: Stock, txns: list[StockTransaction]) -> StockPor
     # Use getattr for new columns — graceful fallback if DB migration hasn't run yet
     raw_price = getattr(stock, 'current_price', None)
     current_price = float(raw_price) if raw_price is not None else None
-    price_updated_at = getattr(stock, 'price_updated_at', None)
+    raw_price_updated = getattr(stock, 'price_updated_at', None)
+    # Stored as naive UTC; attach tzinfo so JS parses as UTC not local
+    price_updated_at = raw_price_updated.replace(tzinfo=timezone.utc) if raw_price_updated else None
     show_on_dashboard = getattr(stock, 'show_on_dashboard', False)
     current_value = round(total_shares * current_price, 2) if current_price else None
     gain_loss = round(current_value - total_invested, 2) if current_value is not None else None

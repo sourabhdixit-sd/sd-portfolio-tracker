@@ -20,12 +20,9 @@ def _window_metrics(rows, days: int, current_nav: float) -> tuple:
     if not navs:
         return None, None, None, None
     high, low = max(navs), min(navs)
-    return (
-        high,
-        low,
-        round(((high - current_nav) / high) * 100, 2),
-        round(((current_nav - low) / low) * 100, 2),
-    )
+    pct_from_high = round(((high - current_nav) / high) * 100, 2) if high else None
+    pct_from_low = round(((current_nav - low) / low) * 100, 2) if low else None
+    return high, low, pct_from_high, pct_from_low
 
 
 def _compute_sma(navs_asc: list[float], period: int) -> float | None:
