@@ -219,25 +219,32 @@ async def sync_stock_prices(
     stocks = result.scalars().all()
 
     if not stocks:
-        return {"synced": 0, "failed": 0}
+        return {"synced": 0, "failed": 0, "failures": []}
 
     symbols = [s.symbol for s in stocks]
-    prices = await fetch_prices_batch(symbols)
+    price_map = await fetch_prices_batch(symbols)
 
     synced = failed = 0
+    failures: list[dict] = []
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     for stock in stocks:
-        price = prices.get(stock.symbol)
+        price, err = price_map.get(stock.symbol, (None, "no result"))
         if price is not None:
             stock.current_price = price
             stock.price_updated_at = now
             synced += 1
         else:
             failed += 1
+            failures.append({
+                "symbol": stock.symbol,
+                "name": stock.name,
+                "error": err or "unknown",
+            })
 
     await db.flush()
-    return {"synced": synced, "failed": failed}
+    print(f"[stock-sync] complete: {synced} synced, {failed} failed")
+    return {"synced": synced, "failed": failed, "failures": failures[:10]}
 
 
 @router.patch("/{stock_id}/watchlist")

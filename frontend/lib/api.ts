@@ -415,8 +415,14 @@ export async function confirmStocksImport(
   });
 }
 
-export async function syncStockPrices(): Promise<{ synced: number; failed: number }> {
-  return apiFetch<{ synced: number; failed: number }>("/stocks/sync", { method: "POST" });
+export interface StockSyncResult {
+  synced: number;
+  failed: number;
+  failures?: Array<{ symbol: string; name: string; error: string }>;
+}
+
+export async function syncStockPrices(): Promise<StockSyncResult> {
+  return apiFetch<StockSyncResult>("/stocks/sync", { method: "POST" });
 }
 
 export async function getStockWatchlist(): Promise<StockPortfolioEntry[]> {

@@ -96,13 +96,27 @@ export default function StocksClient() {
     setSyncResult("");
     try {
       const result = await syncStockPrices();
-      setSyncResult(`${result.synced} updated${result.failed > 0 ? `, ${result.failed} failed` : ""}`);
+      let msg = `${result.synced} updated`;
+      if (result.failed > 0) {
+        msg += ` · ${result.failed} failed`;
+        if (result.failures && result.failures.length > 0) {
+          const fails = result.failures.map(f => f.symbol).slice(0, 5).join(", ");
+          const more = result.failures.length > 5 ? ` +${result.failures.length - 5} more` : "";
+          msg += ` (${fails}${more})`;
+        }
+      }
+      setSyncResult(msg);
+      if (result.failures && result.failures.length > 0) {
+        console.warn("[Stocks] Sync failures:", result.failures);
+      }
       await loadPortfolio();
     } catch (err) {
-      setSyncResult("Sync failed");
+      const msg = err instanceof Error ? `Error: ${err.message}` : "Sync failed";
+      console.error("[Stocks] Sync error:", err);
+      setSyncResult(msg);
     } finally {
       setSyncing(false);
-      setTimeout(() => setSyncResult(""), 5000);
+      setTimeout(() => setSyncResult(""), 10000);
     }
   }
 
