@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, Fragment } from "react";
-import { getStockPortfolio, getStockTransactions, deleteStockTransaction, syncStockPrices, toggleStockWatchlist, updateStockSymbol } from "@/lib/api";
+import { getStockPortfolio, getStockTransactions, deleteStockTransaction, syncStockPrices, toggleStockWatchlist, updateStockSymbol, rematchStockSymbols } from "@/lib/api";
 import type { StockPortfolioEntry, StockTransaction } from "@/lib/api";
 import ImportStocksModal from "@/components/ImportStocksModal";
 
@@ -43,6 +43,8 @@ export default function StocksClient() {
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [editingSymbolId, setEditingSymbolId] = useState<number | null>(null);
   const [editingSymbolValue, setEditingSymbolValue] = useState<string>("");
+  const [rematching, setRematching] = useState(false);
+  const [rematchResult, setRematchResult] = useState<string>("");
 
   async function loadPortfolio() {
     try {
@@ -122,6 +124,25 @@ export default function StocksClient() {
     }
   }
 
+  async function handleRematch() {
+    setRematching(true);
+    setRematchResult("");
+    try {
+      const result = await rematchStockSymbols();
+      setRematchResult(
+        result.updated > 0
+          ? `${result.updated}/${result.checked} symbols corrected — sync prices to update`
+          : `All ${result.checked} symbols already correct`
+      );
+      if (result.updated > 0) await loadPortfolio();
+    } catch (err) {
+      setRematchResult(err instanceof Error ? `Error: ${err.message}` : "Failed");
+    } finally {
+      setRematching(false);
+      setTimeout(() => setRematchResult(""), 10000);
+    }
+  }
+
   function startEditSymbol(stockId: number, currentSymbol: string) {
     setEditingSymbolId(stockId);
     setEditingSymbolValue(currentSymbol);
@@ -158,6 +179,24 @@ export default function StocksClient() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-slate-100">Stocks</h1>
         <div className="flex items-center gap-2">
+          {/* Auto-Fix Symbols button */}
+          <div className="flex flex-col items-end gap-0.5">
+            <button
+              onClick={handleRematch}
+              disabled={rematching}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-50 text-white text-sm font-medium rounded-md transition-colors"
+            >
+              {rematching && (
+                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              )}
+              {rematching ? "Fixing…" : "Auto-Fix Symbols"}
+            </button>
+            {rematchResult && <span className="text-xs text-slate-400 text-right max-w-[200px]">{rematchResult}</span>}
+          </div>
+
           {/* Sync Prices button */}
           <div className="flex flex-col items-end gap-0.5">
             <button

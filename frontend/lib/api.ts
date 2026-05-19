@@ -421,6 +421,14 @@ export interface StockSyncResult {
   failures?: Array<{ symbol: string; name: string; error: string }>;
 }
 
+export async function rematchStockSymbols(): Promise<{
+  checked: number;
+  updated: number;
+  changes: Array<{ name: string; old_symbol: string; new_symbol: string }>;
+}> {
+  return apiFetch("/stocks/rematch-symbols", { method: "POST" });
+}
+
 export async function updateStockSymbol(
   stockId: number,
   symbol: string

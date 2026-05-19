@@ -1,6 +1,9 @@
+import asyncio
+import re
 from datetime import date, datetime, timezone
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +20,41 @@ from app.schemas import (
 from app.auth import get_current_user
 from app.services.portfolio_parser import parse_stocks_from_pdf, parse_stocks_from_excel
 from app.services.stock_price_fetcher import fetch_prices_batch
+
+_YAHOO_SEARCH = "https://query2.finance.yahoo.com/v1/finance/search"
+_YAHOO_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Accept": "application/json",
+}
+_CLEAN_SUFFIXES = re.compile(
+    r"\s+(ltd\.?|limited|corp\.?|corporation|industries|industry|"
+    r"enterprises|company|co\.?|pvt\.?|private|inc\.?)$",
+    flags=re.IGNORECASE,
+)
+
+
+def _clean_name(name: str) -> str:
+    return _CLEAN_SUFFIXES.sub("", name.strip()).strip()
+
+
+async def _lookup_nse_symbol(client: httpx.AsyncClient, name: str) -> str | None:
+    cleaned = _clean_name(name)
+    try:
+        r = await client.get(
+            _YAHOO_SEARCH,
+            params={"q": cleaned, "quotesCount": 6, "newsCount": 0, "country": "India"},
+            timeout=10.0,
+        )
+        if r.status_code != 200:
+            return None
+        quotes = r.json().get("quotes", [])
+        # Prefer NSE (.NS) equity over BSE (.BO)
+        equity_ns = [q for q in quotes if q.get("symbol", "").endswith(".NS") and q.get("quoteType") == "EQUITY"]
+        equity_bo = [q for q in quotes if q.get("symbol", "").endswith(".BO") and q.get("quoteType") == "EQUITY"]
+        best = equity_ns or equity_bo
+        return best[0]["symbol"] if best else None
+    except Exception:
+        return None
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
@@ -245,6 +283,47 @@ async def sync_stock_prices(
     await db.flush()
     print(f"[stock-sync] complete: {synced} synced, {failed} failed")
     return {"synced": synced, "failed": failed, "failures": failures[:10]}
+
+
+@router.post("/rematch-symbols")
+async def rematch_symbols(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    """Auto-correct NSE/BSE ticker symbols by searching Yahoo Finance by stock name."""
+    result = await db.execute(select(Stock).where(Stock.is_active == True))
+    stocks = result.scalars().all()
+
+    if not stocks:
+        return {"checked": 0, "updated": 0, "changes": []}
+
+    semaphore = asyncio.Semaphore(3)
+    changes: list[dict] = []
+
+    async def lookup_one(stock: Stock, client: httpx.AsyncClient) -> tuple[Stock, str | None]:
+        async with semaphore:
+            await asyncio.sleep(0.15)
+            sym = await _lookup_nse_symbol(client, stock.name)
+            print(f"[rematch] {stock.name[:35]} -> {sym or 'not found'}")
+            return stock, sym
+
+    async with httpx.AsyncClient(headers=_YAHOO_HEADERS, follow_redirects=True) as client:
+        results = await asyncio.gather(*[lookup_one(s, client) for s in stocks])
+
+    for stock, new_symbol in results:
+        if new_symbol and new_symbol.upper() != stock.symbol.upper():
+            changes.append({
+                "name": stock.name,
+                "old_symbol": stock.symbol,
+                "new_symbol": new_symbol,
+            })
+            stock.symbol = new_symbol
+            stock.current_price = None
+            stock.price_updated_at = None
+
+    await db.flush()
+    print(f"[rematch] complete: checked={len(stocks)}, updated={len(changes)}")
+    return {"checked": len(stocks), "updated": len(changes), "changes": changes}
 
 
 @router.patch("/{stock_id}/symbol")
