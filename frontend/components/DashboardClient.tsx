@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { getSignals, getSignalConfig, getSyncStatus, getPortfolio, getStockWatchlist, toggleStockWatchlist } from "@/lib/api";
+import { getSignals, getSignalConfig, getSyncStatus, getPortfolio, getStockWatchlist, getStockPortfolio, toggleStockWatchlist } from "@/lib/api";
 import type { FundWithSignal, Signal, SignalConfig, StockPortfolioEntry } from "@/lib/api";
 import SignalBadge from "@/components/SignalBadge";
 import SyncButton from "@/components/SyncButton";
@@ -56,7 +56,10 @@ export default function DashboardClient() {
     rsi_oversold: 30, rsi_overbought: 70, min_buy_signals: 2, min_sell_signals: 2,
   });
   const [lastSync, setLastSync] = useState<string | null>(null);
-  const [portfolioTotal, setPortfolioTotal] = useState(0);
+  const [mfCurrent, setMfCurrent] = useState(0);
+  const [mfInvested, setMfInvested] = useState(0);
+  const [stocksCurrent, setStocksCurrent] = useState(0);
+  const [stocksInvested, setStocksInvested] = useState(0);
   const [gainersCount, setGainersCount] = useState(0);
   const [watchlist, setWatchlist] = useState<StockPortfolioEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,16 +67,22 @@ export default function DashboardClient() {
   const [togglingStarId, setTogglingStarId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
-    const [signalsRes, configRes, syncRes, portfolioRes, watchlistRes] = await Promise.allSettled([
-      getSignals(), getSignalConfig(), getSyncStatus(), getPortfolio(), getStockWatchlist(),
+    const [signalsRes, configRes, syncRes, portfolioRes, watchlistRes, stocksRes] = await Promise.allSettled([
+      getSignals(), getSignalConfig(), getSyncStatus(), getPortfolio(), getStockWatchlist(), getStockPortfolio(),
     ]);
     if (signalsRes.status === "fulfilled") setSignals(signalsRes.value);
     if (configRes.status === "fulfilled") setConfig(configRes.value);
     if (syncRes.status === "fulfilled") setLastSync(syncRes.value.last_sync_at);
     if (portfolioRes.status === "fulfilled") {
       const p = portfolioRes.value;
-      setPortfolioTotal(p.reduce((s, e) => s + (e.current_value ?? 0), 0));
+      setMfCurrent(p.reduce((s, e) => s + (e.current_value ?? 0), 0));
+      setMfInvested(p.reduce((s, e) => s + e.invested_value, 0));
       setGainersCount(p.filter(e => e.gain_loss != null && e.gain_loss > 0).length);
+    }
+    if (stocksRes.status === "fulfilled") {
+      const s = stocksRes.value;
+      setStocksCurrent(s.reduce((sum, e) => sum + (e.current_value ?? 0), 0));
+      setStocksInvested(s.reduce((sum, e) => sum + e.invested_value, 0));
     }
     if (watchlistRes.status === "fulfilled") setWatchlist(watchlistRes.value);
     setLoading(false);
@@ -106,6 +115,15 @@ export default function DashboardClient() {
   const sellSignals = signals.filter(s => s.signal === "SELL" || s.signal === "STRONG_SELL");
   const activeSignalsCount = buySignals.length + sellSignals.length;
 
+  const totalCurrent  = mfCurrent + stocksCurrent;
+  const totalInvested = mfInvested + stocksInvested;
+  const totalGainLoss = totalCurrent - totalInvested;
+  const totalGainPct  = totalInvested > 0 ? (totalGainLoss / totalInvested) * 100 : 0;
+  const mfGainLoss    = mfCurrent - mfInvested;
+  const mfGainPct     = mfInvested > 0 ? (mfGainLoss / mfInvested) * 100 : 0;
+  const stocksGainLoss = stocksCurrent - stocksInvested;
+  const stocksGainPct  = stocksInvested > 0 ? (stocksGainLoss / stocksInvested) * 100 : 0;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -130,15 +148,44 @@ export default function DashboardClient() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Total Portfolio Value</p>
-          <p className="text-2xl font-bold text-slate-100">{portfolioTotal > 0 ? formatINR(portfolioTotal) : "—"}</p>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Total Portfolio */}
+        <div className="col-span-2 lg:col-span-1 bg-slate-800 border border-slate-700 rounded-lg p-4">
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Total Portfolio</p>
+          <p className="text-2xl font-bold text-slate-100">{totalCurrent > 0 ? formatINR(totalCurrent) : "—"}</p>
+          {totalInvested > 0 && (
+            <div className="mt-1 space-y-0.5">
+              <p className="text-xs text-slate-500">Invested: {formatINR(totalInvested)}</p>
+              <p className={`text-sm font-medium ${getGainClass(totalGainLoss)}`}>
+                {formatINR(totalGainLoss)} ({formatPct(totalGainPct)})
+              </p>
+            </div>
+          )}
         </div>
+
+        {/* Mutual Funds */}
         <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Funds in Gain</p>
-          <p className="text-2xl font-bold text-green-400">{gainersCount}</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Mutual Funds</p>
+          <p className="text-xl font-bold text-slate-100">{mfCurrent > 0 ? formatINR(mfCurrent) : "—"}</p>
+          {mfInvested > 0 && (
+            <p className={`text-sm mt-1 ${getGainClass(mfGainLoss)}`}>{formatPct(mfGainPct)}</p>
+          )}
+          <p className="text-xs text-slate-500 mt-0.5">{gainersCount} fund{gainersCount !== 1 ? "s" : ""} in gain</p>
         </div>
+
+        {/* Stocks */}
+        <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Stocks</p>
+          <p className="text-xl font-bold text-slate-100">{stocksCurrent > 0 ? formatINR(stocksCurrent) : "—"}</p>
+          {stocksInvested > 0 && stocksCurrent > 0 && (
+            <p className={`text-sm mt-1 ${getGainClass(stocksGainLoss)}`}>{formatPct(stocksGainPct)}</p>
+          )}
+          {stocksInvested > 0 && stocksCurrent === 0 && (
+            <p className="text-xs text-slate-500 mt-1">Sync prices to see value</p>
+          )}
+        </div>
+
+        {/* Active Signals */}
         <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Active Signals</p>
           <p className="text-2xl font-bold text-slate-100">{activeSignalsCount}</p>
