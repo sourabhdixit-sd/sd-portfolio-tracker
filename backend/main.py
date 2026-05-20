@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE stocks ADD COLUMN IF NOT EXISTS show_on_dashboard BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE stocks ADD COLUMN IF NOT EXISTS current_price NUMERIC(12,4)",
             "ALTER TABLE stocks ADD COLUMN IF NOT EXISTS price_updated_at TIMESTAMP",
+            "ALTER TABLE amfi_overrides ALTER COLUMN created_at SET DEFAULT NOW()",
         ]:
             await conn.execute(text(stmt))
     start_scheduler()

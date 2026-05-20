@@ -15,7 +15,7 @@ YAHOO_HEADERS = {
     "Referer": "https://finance.yahoo.com",
 }
 
-_DELAY_BETWEEN_REQUESTS = 0.2  # seconds between each fetch to avoid 429
+_DELAY_BETWEEN_REQUESTS = 0.4  # seconds between each fetch to avoid 429
 
 
 async def _fetch_one(
@@ -69,7 +69,7 @@ async def fetch_prices_batch(symbols: list[str]) -> dict[str, tuple[float | None
     if skipped:
         print(f"[stock-sync] deduplicated {len(symbols)} → {len(unique_symbols)} unique symbols")
 
-    semaphore = asyncio.Semaphore(5)
+    semaphore = asyncio.Semaphore(3)
 
     async with httpx.AsyncClient(
         headers=YAHOO_HEADERS,
