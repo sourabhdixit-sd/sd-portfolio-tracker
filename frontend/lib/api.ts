@@ -46,6 +46,7 @@ export interface Transaction {
 export interface PortfolioEntry {
   fund_id: number;
   fund_name: string;
+  amfi_code: string;
   sector: string | null;
   total_units: number;
   avg_buy_nav: number;
@@ -169,6 +170,16 @@ export async function rematchFunds(): Promise<{ checked: number; updated: number
 // Portfolio endpoints
 export async function getPortfolio(): Promise<PortfolioEntry[]> {
   return apiFetch<PortfolioEntry[]>("/portfolio");
+}
+
+export async function updateFundAmfiCode(
+  fundId: number,
+  amfiCode: string
+): Promise<{ fund_id: number; amfi_code: string }> {
+  return apiFetch(`/funds/${fundId}/amfi-code`, {
+    method: "PATCH",
+    body: JSON.stringify({ amfi_code: amfiCode }),
+  });
 }
 
 export async function getTransactions(fundId: number): Promise<Transaction[]> {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
-import { getTransactions, deleteTransaction, getPortfolio, getFunds } from "@/lib/api";
+import { getTransactions, deleteTransaction, getPortfolio, getFunds, updateFundAmfiCode } from "@/lib/api";
 import type { Fund, PortfolioEntry, Transaction } from "@/lib/api";
 import AddTransactionForm from "@/components/AddTransactionForm";
 
@@ -49,6 +49,8 @@ export default function PortfolioClient() {
   const [txLoading, setTxLoading] = useState<Record<number, boolean>>({});
   const [txError, setTxError] = useState<Record<number, string>>({});
   const [deletingTxId, setDeletingTxId] = useState<number | null>(null);
+  const [editingAmfiId, setEditingAmfiId] = useState<number | null>(null);
+  const [editingAmfiValue, setEditingAmfiValue] = useState<string>("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -122,6 +124,24 @@ export default function PortfolioClient() {
       );
     } finally {
       setDeletingTxId(null);
+    }
+  }
+
+  function startEditAmfi(fundId: number, currentCode: string) {
+    setEditingAmfiId(fundId);
+    setEditingAmfiValue(currentCode);
+  }
+
+  async function saveAmfi(fundId: number) {
+    const code = editingAmfiValue.trim();
+    if (!code) { setEditingAmfiId(null); return; }
+    try {
+      await updateFundAmfiCode(fundId, code);
+      await loadData();
+    } catch (err) {
+      console.error("[Portfolio] AMFI code update failed:", err);
+    } finally {
+      setEditingAmfiId(null);
     }
   }
 
@@ -245,6 +265,9 @@ export default function PortfolioClient() {
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Fund
                   </th>
+                  <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    AMFI Code
+                  </th>
                   <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider">
                     Units
                   </th>
@@ -290,6 +313,29 @@ export default function PortfolioClient() {
                             </span>
                           )}
                         </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs" onClick={e => e.stopPropagation()}>
+                        {editingAmfiId === entry.fund_id ? (
+                          <input
+                            autoFocus
+                            value={editingAmfiValue}
+                            onChange={e => setEditingAmfiValue(e.target.value)}
+                            onBlur={() => saveAmfi(entry.fund_id)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") saveAmfi(entry.fund_id);
+                              if (e.key === "Escape") setEditingAmfiId(null);
+                            }}
+                            className="w-24 bg-slate-700 border border-blue-500 rounded px-1.5 py-0.5 text-xs text-slate-100 font-mono focus:outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => startEditAmfi(entry.fund_id, entry.amfi_code)}
+                            title="Click to edit AMFI code — will clear and re-fetch NAV history"
+                            className="text-slate-500 hover:text-blue-400 hover:underline font-mono text-xs transition-colors"
+                          >
+                            {entry.amfi_code}
+                          </button>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-300">
                         {entry.total_units.toLocaleString("en-IN", {
@@ -351,7 +397,7 @@ export default function PortfolioClient() {
                     {expandedFundId === entry.fund_id && (
                       <tr>
                         <td
-                          colSpan={9}
+                          colSpan={10}
                           className="px-6 py-4 bg-slate-900/50 border-b border-slate-700"
                         >
                           <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">

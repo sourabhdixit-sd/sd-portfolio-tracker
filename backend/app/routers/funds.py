@@ -414,6 +414,28 @@ async def unified_confirm(
     }
 
 
+@router.patch("/{fund_id}/amfi-code")
+async def update_fund_amfi_code(
+    fund_id: int,
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    result = await db.execute(select(Fund).where(Fund.id == fund_id))
+    fund = result.scalar_one_or_none()
+    if not fund:
+        raise HTTPException(status_code=404, detail="Fund not found")
+    new_code = str(payload.get("amfi_code", "")).strip()
+    if not new_code:
+        raise HTTPException(status_code=400, detail="amfi_code is required")
+    fund.amfi_code = new_code
+    await db.execute(sql_delete(NavHistory).where(NavHistory.fund_id == fund_id))
+    await db.flush()
+    background_tasks.add_task(_fetch_navs_background, [(fund_id, new_code)])
+    return {"fund_id": fund_id, "amfi_code": fund.amfi_code}
+
+
 @router.delete("/{fund_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_fund(
     fund_id: int,
