@@ -132,6 +132,7 @@ class ImportTransaction(BaseModel):
 class ImportFund(BaseModel):
     fund_name: str
     amfi_code: str
+    isin: Optional[str] = None  # used to cache the AMFI code for future imports
     sector: Optional[str] = None
     transactions: List[ImportTransaction]
     excluded: bool = False

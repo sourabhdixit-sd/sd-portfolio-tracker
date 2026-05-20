@@ -86,7 +86,8 @@ function getAuthHeader(): string {
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs = 30000
 ): Promise<T> {
   const url = `${getBaseUrl()}${path}`;
   const headers: HeadersInit = {
@@ -96,7 +97,7 @@ async function apiFetch<T>(
   };
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const startTime = Date.now();
   let res: Response;
 
@@ -436,7 +437,7 @@ export async function rematchStockSymbols(): Promise<{
   checked: number;
   proposals: RematchProposal[];
 }> {
-  return apiFetch("/stocks/rematch-symbols", { method: "POST" });
+  return apiFetch("/stocks/rematch-symbols", { method: "POST" }, 120000);
 }
 
 export async function applyRematchChanges(
@@ -459,7 +460,7 @@ export async function updateStockSymbol(
 }
 
 export async function syncStockPrices(): Promise<StockSyncResult> {
-  return apiFetch<StockSyncResult>("/stocks/sync", { method: "POST" });
+  return apiFetch<StockSyncResult>("/stocks/sync", { method: "POST" }, 120000);
 }
 
 export async function getStockWatchlist(): Promise<StockPortfolioEntry[]> {
@@ -482,6 +483,7 @@ export interface UnifiedImportConfirmPayload {
   funds: Array<{
     fund_name: string;
     amfi_code: string;
+    isin: string;
     sector?: string;
     transactions: Array<{ units: number; avg_cost: number }>;
     excluded: boolean;

@@ -69,7 +69,7 @@ async def fetch_prices_batch(symbols: list[str]) -> dict[str, tuple[float | None
     if skipped:
         print(f"[stock-sync] deduplicated {len(symbols)} → {len(unique_symbols)} unique symbols")
 
-    semaphore = asyncio.Semaphore(3)
+    semaphore = asyncio.Semaphore(5)
 
     async with httpx.AsyncClient(
         headers=YAHOO_HEADERS,

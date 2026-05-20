@@ -75,6 +75,7 @@ export default function ImportPortfolioModal({ onClose, onSuccess }: ImportPortf
         funds: fundRows.map(row => ({
           fund_name: row.fund_name,
           amfi_code: row.editedAmfiCode.trim(),
+          isin: row.isin,
           transactions: row.transactions.map(t => ({ units: t.units, avg_cost: t.avg_cost })),
           excluded: !row.included,
         })),

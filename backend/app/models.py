@@ -79,6 +79,17 @@ class StockTransaction(Base):
     stock: Mapped["Stock"] = relationship("Stock", back_populates="transactions")
 
 
+class AmfiOverride(Base):
+    """Caches ISIN → AMFI code mappings entered manually during import."""
+    __tablename__ = "amfi_overrides"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    isin: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    amfi_code: Mapped[str] = mapped_column(String, nullable=False)
+    fund_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
+
+
 class SignalConfig(Base):
     __tablename__ = "signal_config"
 

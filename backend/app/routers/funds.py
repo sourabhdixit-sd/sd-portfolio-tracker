@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Backgro
 from sqlalchemy import select, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db, AsyncSessionLocal
-from app.models import Fund, NavHistory, Transaction
+from app.models import Fund, NavHistory, Transaction, AmfiOverride
 from app.schemas import FundCreate, FundOut, ImportConfirmPayload, UnifiedImportConfirmPayload
 from app.services.portfolio_parser import parse_stocks_from_pdf, parse_stocks_from_excel
 from app.models import Stock, StockTransaction
@@ -283,6 +283,7 @@ async def rematch_amfi_codes(
 @router.post("/import/unified/parse")
 async def unified_parse(
     file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
     content = await file.read()
@@ -299,6 +300,17 @@ async def unified_parse(
 
     funds_list = await _lookup_all_parallel(mf_parsed["funds"])
 
+    # Second pass: fill AMFI codes from cache for funds mfapi.in couldn't find
+    for fund in funds_list:
+        if fund.get("needs_manual_amfi"):
+            cached = (await db.execute(
+                select(AmfiOverride).where(AmfiOverride.isin == fund["isin"])
+            )).scalar_one_or_none()
+            if cached:
+                fund["amfi_code"] = cached.amfi_code
+                fund["matched_name"] = f"{cached.fund_name or fund['fund_name']} (from cache)"
+                fund["needs_manual_amfi"] = False
+
     def _suggest_symbol(name: str) -> str:
         cleaned = name.upper().split()[0] if name else ""
         return f"{cleaned}.NS" if cleaned else ""
@@ -312,6 +324,7 @@ async def unified_parse(
             "avg_cost": s["avg_cost"],
             "investment_amount": s["investment_amount"],
             "market_price": s["market_price"],
+            "name_warning": s.get("name_warning", False),
         }
         for isin, s in eq_parsed["stocks"].items()
     ]
@@ -345,16 +358,32 @@ async def unified_confirm(
         existing = await db.execute(select(Fund).where(Fund.amfi_code == import_fund.amfi_code))
         if existing.scalar_one_or_none():
             funds_skipped += 1
-            continue
-        fund = Fund(name=import_fund.fund_name, amfi_code=import_fund.amfi_code, sector=import_fund.sector)
-        db.add(fund)
-        await db.flush()
-        await db.refresh(fund)
-        for txn in import_fund.transactions:
-            db.add(Transaction(fund_id=fund.id, transaction_date=txn_date, units=txn.units, buy_nav=txn.avg_cost))
-        await db.flush()
-        funds_added += 1
-        new_funds.append(fund)
+        else:
+            fund = Fund(name=import_fund.fund_name, amfi_code=import_fund.amfi_code, sector=import_fund.sector)
+            db.add(fund)
+            await db.flush()
+            await db.refresh(fund)
+            for txn in import_fund.transactions:
+                db.add(Transaction(fund_id=fund.id, transaction_date=txn_date, units=txn.units, buy_nav=txn.avg_cost))
+            await db.flush()
+            funds_added += 1
+            new_funds.append(fund)
+
+        # Cache ISIN → AMFI mapping for future imports (upsert)
+        if import_fund.isin and import_fund.amfi_code:
+            existing_override = (await db.execute(
+                select(AmfiOverride).where(AmfiOverride.isin == import_fund.isin)
+            )).scalar_one_or_none()
+            if existing_override:
+                existing_override.amfi_code = import_fund.amfi_code
+                existing_override.fund_name = import_fund.fund_name
+            else:
+                db.add(AmfiOverride(
+                    isin=import_fund.isin,
+                    amfi_code=import_fund.amfi_code,
+                    fund_name=import_fund.fund_name,
+                ))
+            await db.flush()
 
     for item in payload.stocks:
         if item.excluded:
