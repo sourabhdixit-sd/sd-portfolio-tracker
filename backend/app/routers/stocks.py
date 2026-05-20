@@ -55,16 +55,59 @@ def _clean_name(name: str) -> str:
     return _CLEAN_SUFFIXES.sub("", name.strip()).strip()
 
 
-async def _lookup_nse_symbol(client: httpx.AsyncClient, name: str) -> str | None:
-    cleaned = _clean_name(name)
-    name_lower = name.lower()
+async def _verify_ns_price(client: httpx.AsyncClient, symbol: str) -> tuple[bool, str | None]:
+    """Check if symbol.NS has a live price. Returns (valid, longName)."""
+    try:
+        r = await client.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+            params={"interval": "1d", "range": "1d"},
+            timeout=8.0,
+        )
+        if r.status_code == 200:
+            result = r.json().get("chart", {}).get("result", [])
+            if result and result[0].get("meta", {}).get("regularMarketPrice", 0) > 0:
+                long_name = result[0].get("meta", {}).get("longName")
+                return True, long_name
+    except Exception:
+        pass
+    return False, None
 
-    # Override dict handles known hard cases
+
+async def _lookup_nse_symbol(
+    client: httpx.AsyncClient, name: str, isin: str | None = None
+) -> tuple[str | None, str | None]:
+    """Returns (nse_symbol, canonical_name). canonical_name may be None."""
+
+    # 1. Override dict — catches known hard cases before any API call
+    #    (some ISINs return wrong Yahoo tickers, e.g. Tata Motors → TMPV.NS)
+    name_lower = name.lower()
     for fragment, ticker in _SYMBOL_OVERRIDES.items():
         if fragment in name_lower:
-            return ticker
+            return ticker, None
 
-    # Search with country=India first, then without (broader)
+    # 2. ISIN search — bypasses garbled names, reliable for most Indian equities
+    if isin:
+        try:
+            r = await client.get(_YAHOO_SEARCH, params={"q": isin, "quotesCount": 6, "newsCount": 0}, timeout=10.0)
+            if r.status_code == 200:
+                quotes = r.json().get("quotes", [])
+                # Prefer .NS directly
+                ns = [q for q in quotes if q.get("symbol", "").endswith(".NS") and q.get("quoteType") == "EQUITY"]
+                if ns:
+                    canonical = ns[0].get("longname") or ns[0].get("shortname")
+                    return ns[0]["symbol"], canonical
+                # .BO result: derive .NS and verify with price check
+                bo = [q for q in quotes if q.get("symbol", "").endswith(".BO") and q.get("quoteType") == "EQUITY"]
+                for q in bo[:2]:
+                    ns_sym = q["symbol"].replace(".BO", ".NS")
+                    valid, long_name = await _verify_ns_price(client, ns_sym)
+                    if valid:
+                        return ns_sym, long_name or q.get("longname") or q.get("shortname")
+        except Exception:
+            pass
+
+    # 3. Name-based search fallback (country=India first, then broader)
+    cleaned = _clean_name(name)
     for country in ["India", None]:
         params: dict = {"q": cleaned, "quotesCount": 6, "newsCount": 0}
         if country:
@@ -74,27 +117,21 @@ async def _lookup_nse_symbol(client: httpx.AsyncClient, name: str) -> str | None
             if r.status_code != 200:
                 continue
             quotes = r.json().get("quotes", [])
-            # Prefer NSE (.NS) equity
             ns = [q for q in quotes if q.get("symbol", "").endswith(".NS") and q.get("quoteType") == "EQUITY"]
             if ns:
-                return ns[0]["symbol"]
-            # Fallback: bare US-listed ticker (e.g. INFY) → try INFY.NS
+                canonical = ns[0].get("longname") or ns[0].get("shortname")
+                return ns[0]["symbol"], canonical
+            # Bare ticker (e.g. INFY) → try INFY.NS
             bare = [q["symbol"] for q in quotes if "." not in q.get("symbol", "") and q.get("quoteType") == "EQUITY"]
             for b in bare[:2]:
-                r2 = await client.get(
-                    f"https://query1.finance.yahoo.com/v8/finance/chart/{b}.NS",
-                    params={"interval": "1d", "range": "1d"},
-                    timeout=8.0,
-                )
-                if r2.status_code == 200:
-                    result = r2.json().get("chart", {}).get("result", [])
-                    if result and result[0].get("meta", {}).get("regularMarketPrice", 0) > 0:
-                        return f"{b}.NS"
+                valid, long_name = await _verify_ns_price(client, f"{b}.NS")
+                if valid:
+                    return f"{b}.NS", long_name
         except Exception:
             continue
         await asyncio.sleep(0.1)
 
-    return None
+    return None, None
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
@@ -190,6 +227,7 @@ async def parse_stocks_file(
             "avg_cost": s["avg_cost"],
             "investment_amount": s["investment_amount"],
             "market_price": s["market_price"],
+            "name_warning": s.get("name_warning", False),
         }
         for isin, s in parsed["stocks"].items()
     ]
@@ -330,40 +368,69 @@ async def rematch_symbols(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ):
-    """Auto-correct NSE/BSE ticker symbols by searching Yahoo Finance by stock name."""
+    """
+    Preview symbol + name corrections via ISIN-based Yahoo search.
+    Returns proposals only — does NOT write to DB. Use /rematch-symbols/apply to save.
+    """
     result = await db.execute(select(Stock).where(Stock.is_active == True))
     stocks = result.scalars().all()
 
     if not stocks:
-        return {"checked": 0, "updated": 0, "changes": []}
+        return {"checked": 0, "proposals": []}
 
     semaphore = asyncio.Semaphore(3)
-    changes: list[dict] = []
 
-    async def lookup_one(stock: Stock, client: httpx.AsyncClient) -> tuple[Stock, str | None]:
+    async def lookup_one(stock: Stock, client: httpx.AsyncClient) -> tuple[Stock, str | None, str | None]:
         async with semaphore:
             await asyncio.sleep(0.15)
-            sym = await _lookup_nse_symbol(client, stock.name)
-            print(f"[rematch] {stock.name[:35]} -> {sym or 'not found'}")
-            return stock, sym
+            sym, canonical_name = await _lookup_nse_symbol(client, stock.name, isin=stock.isin)
+            print(f"[rematch] {stock.name[:30]} -> {sym or 'not found'} | {canonical_name or '-'}")
+            return stock, sym, canonical_name
 
     async with httpx.AsyncClient(headers=_YAHOO_HEADERS, follow_redirects=True) as client:
         results = await asyncio.gather(*[lookup_one(s, client) for s in stocks])
 
-    for stock, new_symbol in results:
-        if new_symbol and new_symbol.upper() != stock.symbol.upper():
-            changes.append({
-                "name": stock.name,
-                "old_symbol": stock.symbol,
-                "new_symbol": new_symbol,
+    proposals = []
+    for stock, new_symbol, canonical_name in results:
+        symbol_changed = bool(new_symbol and new_symbol.upper() != stock.symbol.upper())
+        name_changed = bool(canonical_name and canonical_name.strip() != stock.name.strip())
+        if symbol_changed or name_changed:
+            proposals.append({
+                "stock_id": stock.id,
+                "current_name": stock.name,
+                "current_symbol": stock.symbol,
+                "suggested_name": canonical_name,
+                "suggested_symbol": new_symbol if symbol_changed else stock.symbol,
+                "symbol_changed": symbol_changed,
+                "name_changed": name_changed,
             })
-            stock.symbol = new_symbol
-            stock.current_price = None
-            stock.price_updated_at = None
 
+    print(f"[rematch] preview: checked={len(stocks)}, proposals={len(proposals)}")
+    return {"checked": len(stocks), "proposals": proposals}
+
+
+@router.post("/rematch-symbols/apply")
+async def apply_rematch(
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+):
+    """Apply user-confirmed symbol + name changes from the rematch preview."""
+    changes = payload.get("changes", [])
+    updated = 0
+    for change in changes:
+        result = await db.execute(select(Stock).where(Stock.id == change["stock_id"]))
+        stock = result.scalar_one_or_none()
+        if not stock:
+            continue
+        stock.symbol = str(change.get("symbol", stock.symbol)).strip().upper()
+        stock.name = str(change.get("name", stock.name)).strip()
+        stock.current_price = None
+        stock.price_updated_at = None
+        updated += 1
     await db.flush()
-    print(f"[rematch] complete: checked={len(stocks)}, updated={len(changes)}")
-    return {"checked": len(stocks), "updated": len(changes), "changes": changes}
+    print(f"[rematch-apply] updated {updated} stocks")
+    return {"updated": updated}
 
 
 @router.patch("/{stock_id}/symbol")

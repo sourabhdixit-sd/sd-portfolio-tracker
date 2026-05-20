@@ -1,8 +1,12 @@
 "use client";
 
 import { useState, useEffect, Fragment } from "react";
-import { getStockPortfolio, getStockTransactions, deleteStockTransaction, syncStockPrices, toggleStockWatchlist, updateStockSymbol, rematchStockSymbols } from "@/lib/api";
-import type { StockPortfolioEntry, StockTransaction } from "@/lib/api";
+import {
+  getStockPortfolio, getStockTransactions, deleteStockTransaction,
+  syncStockPrices, toggleStockWatchlist, updateStockSymbol,
+  rematchStockSymbols, applyRematchChanges,
+} from "@/lib/api";
+import type { StockPortfolioEntry, StockTransaction, RematchProposal } from "@/lib/api";
 import ImportStocksModal from "@/components/ImportStocksModal";
 
 function formatINR(value: number | null | undefined): string {
@@ -30,6 +34,12 @@ function formatPriceAge(dateStr: string | null | undefined): string {
   return new Date(dateStr).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+interface ReviewRow extends RematchProposal {
+  accepted: boolean;
+  editedName: string;
+  editedSymbol: string;
+}
+
 export default function StocksClient() {
   const [portfolio, setPortfolio] = useState<StockPortfolioEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,7 +54,9 @@ export default function StocksClient() {
   const [editingSymbolId, setEditingSymbolId] = useState<number | null>(null);
   const [editingSymbolValue, setEditingSymbolValue] = useState<string>("");
   const [rematching, setRematching] = useState(false);
-  const [rematchResult, setRematchResult] = useState<string>("");
+  const [rematchMsg, setRematchMsg] = useState<string>("");
+  const [reviewRows, setReviewRows] = useState<ReviewRow[]>([]);
+  const [applying, setApplying] = useState(false);
 
   async function loadPortfolio() {
     try {
@@ -126,21 +138,55 @@ export default function StocksClient() {
 
   async function handleRematch() {
     setRematching(true);
-    setRematchResult("");
+    setRematchMsg("");
+    setReviewRows([]);
     try {
       const result = await rematchStockSymbols();
-      setRematchResult(
-        result.updated > 0
-          ? `${result.updated}/${result.checked} symbols corrected — sync prices to update`
-          : `All ${result.checked} symbols already correct`
-      );
-      if (result.updated > 0) await loadPortfolio();
+      if (result.proposals.length === 0) {
+        setRematchMsg(`All ${result.checked} symbols already correct`);
+        setTimeout(() => setRematchMsg(""), 6000);
+      } else {
+        setReviewRows(result.proposals.map(p => ({
+          ...p,
+          accepted: true,
+          editedName: p.suggested_name ?? p.current_name,
+          editedSymbol: p.suggested_symbol ?? p.current_symbol,
+        })));
+        setRematchMsg("");
+      }
     } catch (err) {
-      setRematchResult(err instanceof Error ? `Error: ${err.message}` : "Failed");
+      setRematchMsg(err instanceof Error ? `Error: ${err.message}` : "Failed");
+      setTimeout(() => setRematchMsg(""), 8000);
     } finally {
       setRematching(false);
-      setTimeout(() => setRematchResult(""), 10000);
     }
+  }
+
+  async function handleApplyRematch() {
+    const accepted = reviewRows.filter(r => r.accepted);
+    if (accepted.length === 0) return;
+    setApplying(true);
+    try {
+      const result = await applyRematchChanges(
+        accepted.map(r => ({ stock_id: r.stock_id, symbol: r.editedSymbol, name: r.editedName }))
+      );
+      setReviewRows([]);
+      setRematchMsg(`${result.updated} stocks updated — sync prices to fetch latest`);
+      setTimeout(() => setRematchMsg(""), 8000);
+      await loadPortfolio();
+    } catch (err) {
+      setRematchMsg(err instanceof Error ? `Error: ${err.message}` : "Apply failed");
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  const allAccepted = reviewRows.length > 0 && reviewRows.every(r => r.accepted);
+  const acceptedCount = reviewRows.filter(r => r.accepted).length;
+
+  function toggleSelectAll() {
+    const next = !allAccepted;
+    setReviewRows(prev => prev.map(r => ({ ...r, accepted: next })));
   }
 
   function startEditSymbol(stockId: number, currentSymbol: string) {
@@ -192,9 +238,9 @@ export default function StocksClient() {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
               )}
-              {rematching ? "Fixing…" : "Auto-Fix Symbols"}
+              {rematching ? "Looking up…" : "Auto-Fix Symbols"}
             </button>
-            {rematchResult && <span className="text-xs text-slate-400 text-right max-w-[200px]">{rematchResult}</span>}
+            {rematchMsg && <span className="text-xs text-slate-400 text-right max-w-[220px]">{rematchMsg}</span>}
           </div>
 
           {/* Sync Prices button */}
@@ -217,6 +263,7 @@ export default function StocksClient() {
               <span className="text-xs text-slate-500">Updated: {formatPriceAge(lastUpdated)}</span>
             )}
           </div>
+
           <button
             onClick={() => setShowImport(true)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors"
@@ -228,6 +275,107 @@ export default function StocksClient() {
           </button>
         </div>
       </div>
+
+      {/* Rematch review panel */}
+      {reviewRows.length > 0 && (
+        <div className="bg-slate-800 border border-amber-700/50 rounded-lg overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-amber-300">
+                {reviewRows.length} change{reviewRows.length !== 1 ? "s" : ""} found — review and apply
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">Edit names or symbols before applying. Uncheck rows you want to skip.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleApplyRematch}
+                disabled={applying || acceptedCount === 0}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm font-medium rounded-md transition-colors"
+              >
+                {applying ? "Applying…" : `Apply ${acceptedCount} change${acceptedCount !== 1 ? "s" : ""}`}
+              </button>
+              <button
+                onClick={() => setReviewRows([])}
+                className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+          <div className="overflow-x-auto max-h-80 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-800 z-10">
+                <tr className="border-b border-slate-700 text-slate-500 uppercase">
+                  <th className="px-4 py-2 text-left w-8">
+                    <input
+                      type="checkbox"
+                      checked={allAccepted}
+                      onChange={toggleSelectAll}
+                      className="w-3.5 h-3.5 accent-amber-500"
+                      title="Select / deselect all"
+                    />
+                  </th>
+                  <th className="px-4 py-2 text-left">Stock</th>
+                  <th className="px-4 py-2 text-left">Symbol</th>
+                  <th className="px-4 py-2 text-left">Name</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700">
+                {reviewRows.map((row, i) => (
+                  <tr
+                    key={row.stock_id}
+                    className={`${row.accepted ? "" : "opacity-40"} ${row.name_changed ? "bg-amber-900/10" : ""}`}
+                  >
+                    <td className="px-4 py-2">
+                      <input
+                        type="checkbox"
+                        checked={row.accepted}
+                        onChange={() => setReviewRows(prev => prev.map((r, j) => j === i ? { ...r, accepted: !r.accepted } : r))}
+                        className="w-3.5 h-3.5 accent-amber-500"
+                      />
+                    </td>
+                    <td className="px-4 py-2 text-slate-300 max-w-[140px]">
+                      <span className="truncate block" title={row.current_name}>{row.current_name}</span>
+                    </td>
+                    <td className="px-4 py-2">
+                      {row.symbol_changed ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-500 line-through font-mono">{row.current_symbol}</span>
+                          <span className="text-slate-400">→</span>
+                          <input
+                            type="text"
+                            value={row.editedSymbol}
+                            onChange={e => setReviewRows(prev => prev.map((r, j) => j === i ? { ...r, editedSymbol: e.target.value.toUpperCase() } : r))}
+                            className="w-28 bg-slate-700 border border-slate-600 rounded px-1.5 py-0.5 font-mono text-slate-100 focus:outline-none focus:border-amber-500"
+                          />
+                        </div>
+                      ) : (
+                        <span className="text-slate-500 font-mono">{row.current_symbol}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      {row.name_changed ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-500 line-through max-w-[100px] truncate" title={row.current_name}>{row.current_name}</span>
+                          <span className="text-slate-400">→</span>
+                          <input
+                            type="text"
+                            value={row.editedName}
+                            onChange={e => setReviewRows(prev => prev.map((r, j) => j === i ? { ...r, editedName: e.target.value } : r))}
+                            className="w-40 bg-amber-900/30 border border-amber-700/50 rounded px-1.5 py-0.5 text-slate-100 focus:outline-none focus:border-amber-500"
+                          />
+                        </div>
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       {portfolio.length > 0 && (
@@ -317,10 +465,16 @@ export default function StocksClient() {
                         ) : (
                           <button
                             onClick={() => startEditSymbol(entry.stock_id, entry.symbol)}
-                            title="Click to edit ticker symbol"
-                            className="hover:text-blue-400 hover:underline transition-colors"
+                            title={entry.current_price != null
+                              ? "Click to edit ticker symbol"
+                              : "No price fetched — symbol may be wrong. Click to edit or run Auto-Fix Symbols."}
+                            className={`hover:underline transition-colors font-mono text-xs ${
+                              entry.current_price != null
+                                ? "text-slate-400 hover:text-blue-400"
+                                : "text-amber-400 hover:text-amber-300"
+                            }`}
                           >
-                            {entry.symbol}
+                            {entry.current_price == null && "⚠ "}{entry.symbol}
                           </button>
                         )}
                       </td>

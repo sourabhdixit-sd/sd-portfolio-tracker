@@ -9,6 +9,12 @@ from typing import Any
 
 
 ISIN_PATTERN = re.compile(r"(INF\w{9}|INE\w{9})")
+_OCR_JUNK = re.compile(r"[\\|]")  # backslash and pipe are common pdfplumber OCR artifacts
+
+
+def _clean_stock_name(name: str) -> str:
+    name = _OCR_JUNK.sub("", name)
+    return re.sub(r"\s+", " ", name).strip()
 DATE_PATTERN = re.compile(r"Date\s+(\d{2}-\w{3}-\d{4})")
 
 MONTH_MAP = {
@@ -118,7 +124,7 @@ def _parse_stock_lines(full_text: str) -> dict:
         isin_start = isin_match.start()
         isin_end = isin_match.end()
 
-        stock_name = line[:isin_start].strip()
+        raw_name = line[:isin_start].strip()
         remainder = line[isin_end:].strip()
 
         tokens = remainder.split()
@@ -137,6 +143,9 @@ def _parse_stock_lines(full_text: str) -> dict:
         except ValueError:
             continue
 
+        name_warning = bool(_OCR_JUNK.search(raw_name))
+        stock_name = _clean_stock_name(raw_name)
+
         if not stock_name:
             continue
 
@@ -148,6 +157,7 @@ def _parse_stock_lines(full_text: str) -> dict:
                 "avg_cost": avg_cost,
                 "investment_amount": investment_amount,
                 "market_price": market_price,
+                "name_warning": name_warning,
             }
 
     return stocks
@@ -249,6 +259,7 @@ def parse_stocks_from_excel(file_bytes: bytes) -> dict:
                 "avg_cost": avg_cost,
                 "investment_amount": investment_amount,
                 "market_price": market_price,
+                "name_warning": False,  # Excel cells don't have OCR artifacts
             }
 
     return {"report_date": _parse_report_date(header_text), "stocks": stocks}

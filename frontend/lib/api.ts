@@ -353,6 +353,7 @@ export interface ParsedStock {
   avg_cost: number;
   investment_amount: number;
   market_price: number;
+  name_warning?: boolean;
 }
 
 export interface ParsedStocksResult {
@@ -421,12 +422,30 @@ export interface StockSyncResult {
   failures?: Array<{ symbol: string; name: string; error: string }>;
 }
 
+export interface RematchProposal {
+  stock_id: number;
+  current_name: string;
+  current_symbol: string;
+  suggested_name: string | null;
+  suggested_symbol: string | null;
+  symbol_changed: boolean;
+  name_changed: boolean;
+}
+
 export async function rematchStockSymbols(): Promise<{
   checked: number;
-  updated: number;
-  changes: Array<{ name: string; old_symbol: string; new_symbol: string }>;
+  proposals: RematchProposal[];
 }> {
   return apiFetch("/stocks/rematch-symbols", { method: "POST" });
+}
+
+export async function applyRematchChanges(
+  changes: Array<{ stock_id: number; symbol: string; name: string }>
+): Promise<{ updated: number }> {
+  return apiFetch("/stocks/rematch-symbols/apply", {
+    method: "POST",
+    body: JSON.stringify({ changes }),
+  });
 }
 
 export async function updateStockSymbol(

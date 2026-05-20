@@ -13,6 +13,7 @@ type Step = "upload" | "preview" | "done";
 interface StockRow extends ParsedStock {
   included: boolean;
   editedSymbol: string;
+  editedName: string;
 }
 
 function formatINR(value: number): string {
@@ -54,6 +55,7 @@ export default function ImportStocksModal({ onClose, onSuccess }: ImportStocksMo
         ...s,
         included: true,
         editedSymbol: s.suggested_symbol,
+        editedName: s.stock_name,
       }));
       setStockRows(rows);
       const d = result.report_date ?? "";
@@ -74,7 +76,7 @@ export default function ImportStocksModal({ onClose, onSuccess }: ImportStocksMo
       const result = await confirmStocksImport({
         transaction_date: transactionDate,
         stocks: stockRows.map((row) => ({
-          stock_name: row.stock_name,
+          stock_name: row.editedName.trim() || row.stock_name,
           isin: row.isin,
           symbol: row.editedSymbol.trim(),
           shares: row.shares,
@@ -156,6 +158,12 @@ export default function ImportStocksModal({ onClose, onSuccess }: ImportStocksMo
                 </p>
               </div>
 
+              {stockRows.some(r => r.name_warning) && (
+                <div className="text-xs text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-3 py-2">
+                  ⚠ Some stock names have OCR errors (highlighted in amber). The ISIN is correct — "Auto-Fix Symbols" will find the right ticker after import. Correct the name here for display purposes.
+                </div>
+              )}
+
               {stockRows.length === 0 ? (
                 <p className="text-slate-500 text-sm py-4">No stocks detected in this file.</p>
               ) : (
@@ -174,14 +182,26 @@ export default function ImportStocksModal({ onClose, onSuccess }: ImportStocksMo
                     </thead>
                     <tbody className="divide-y divide-slate-700">
                       {stockRows.map((row, i) => (
-                        <tr key={row.isin} className={row.included ? "" : "opacity-40"}>
+                        <tr key={row.isin} className={`${row.included ? "" : "opacity-40"} ${row.name_warning ? "bg-amber-900/10" : ""}`}>
                           <td className="py-2 pr-3">
                             <input type="checkbox" checked={row.included}
                               onChange={() => setStockRows((prev) => prev.map((r, j) => j === i ? { ...r, included: !r.included } : r))}
                               className="w-4 h-4 accent-blue-500" />
                           </td>
-                          <td className="py-2 pr-3 text-slate-200 max-w-[160px]">
-                            <span className="truncate block" title={row.stock_name}>{row.stock_name}</span>
+                          <td className="py-2 pr-3 max-w-[180px]">
+                            {row.name_warning ? (
+                              <div className="flex items-start gap-1">
+                                <span className="text-amber-400 flex-shrink-0 mt-0.5 text-xs" title="OCR may have garbled this name — correct it">⚠</span>
+                                <input
+                                  type="text"
+                                  value={row.editedName}
+                                  onChange={(e) => setStockRows((prev) => prev.map((r, j) => j === i ? { ...r, editedName: e.target.value } : r))}
+                                  className="w-full bg-amber-900/20 border border-amber-600/40 rounded px-1.5 py-0.5 text-xs text-slate-100 focus:outline-none focus:border-amber-500"
+                                />
+                              </div>
+                            ) : (
+                              <span className="truncate block text-slate-200" title={row.stock_name}>{row.stock_name}</span>
+                            )}
                           </td>
                           <td className="py-2 pr-3 text-slate-400 text-xs font-mono">{row.isin}</td>
                           <td className="py-2 pr-3 text-right text-slate-300">{row.shares.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
