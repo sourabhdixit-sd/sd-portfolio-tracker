@@ -7,12 +7,8 @@ import httpx
 
 YAHOO_API = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 YAHOO_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": "Mozilla/5.0",
     "Accept": "application/json",
-    "Referer": "https://finance.yahoo.com",
 }
 
 _DELAY_BETWEEN_REQUESTS = 0.4  # seconds between each fetch to avoid 429

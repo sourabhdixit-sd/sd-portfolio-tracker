@@ -24,7 +24,7 @@ from app.services.stock_price_fetcher import fetch_prices_batch
 # query1 confirmed working from Railway; query2 is blocked/rate-limited from Railway's IP
 _YAHOO_SEARCH = "https://query1.finance.yahoo.com/v1/finance/search"
 _YAHOO_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "User-Agent": "Mozilla/5.0",
     "Accept": "application/json",
 }
 _CLEAN_SUFFIXES = re.compile(
